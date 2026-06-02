@@ -183,3 +183,283 @@ describe("MacOSPlatform", () => {
     expect(script).toContain("if (includeBounds) item.bounds = getBounds(elem);");
   });
 });
+
+// ── AX Element Cache: Expiration, Size Limit, Signature Matching ────────
+
+describe("MacOSPlatform elementCache", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockReset();
+    execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+  });
+
+  it("caches element descriptors with a timestamp from findElement", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify([
+      { id: "Notes/win0/1", role: "AXButton", name: "Save" },
+    ]));
+    const platform = new MacOSPlatform();
+    const before = Date.now();
+
+    await platform.findElement({ text: "Save", role: "AXButton", app: "Notes" });
+
+    const after = Date.now();
+    // Verify the cached descriptor is passed to JXA on a subsequent clickElement
+    // by checking the cachedJson in the script. If cachedAt is between before/after,
+    // the timestamp is present.
+    execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+    await platform.clickElement("Notes/win0/1", "Notes");
+
+    const script = lastJxaScript();
+    // The cached object should have a cachedAt field within our time window
+    const cachedMatch = script.match(/var cached = (\{[^}]+\})/s);
+    expect(cachedMatch).toBeTruthy();
+    const cachedObj = JSON.parse(cachedMatch![1]);
+    expect(cachedObj.cachedAt).toBeGreaterThanOrEqual(before);
+    expect(cachedObj.cachedAt).toBeLessThanOrEqual(after);
+  });
+
+  it("expires cache entries after TTL and passes null cached descriptor to JXA", async () => {
+    vi.useFakeTimers();
+    try {
+      execFileSyncMock.mockReturnValue(JSON.stringify([
+        { id: "Notes/win0/1", role: "AXButton", name: "Save" },
+      ]));
+      const platform = new MacOSPlatform();
+
+      await platform.findElement({ text: "Save", role: "AXButton", app: "Notes" });
+
+      // Advance past TTL (30 seconds)
+      vi.advanceTimersByTime(31_000);
+
+      // Now clickElement should treat the cache entry as expired
+      execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+      await platform.clickElement("Notes/win0/1", "Notes");
+
+      const script = lastJxaScript();
+      const cachedMatch = script.match(/var cached = (null|\{[^}]+\})/s);
+      expect(cachedMatch).toBeTruthy();
+      expect(cachedMatch![1]).toBe("null");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("expires cache entries on typeInElement after TTL", async () => {
+    vi.useFakeTimers();
+    try {
+      execFileSyncMock.mockReturnValue(JSON.stringify([
+        { id: "Notes/win0/1", role: "AXTextField", name: "Search" },
+      ]));
+      const platform = new MacOSPlatform();
+
+      await platform.findElement({ text: "Search", role: "AXTextField", app: "Notes" });
+
+      vi.advanceTimersByTime(31_000);
+
+      execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+      await platform.typeInElement("Notes/win0/1", "hello", "Notes");
+
+      const script = lastJxaScript();
+      const cachedMatch = script.match(/var cached = (null|\{[^}]+\})/s);
+      expect(cachedMatch).toBeTruthy();
+      expect(cachedMatch![1]).toBe("null");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("expires cache entries on setElementValue after TTL", async () => {
+    vi.useFakeTimers();
+    try {
+      execFileSyncMock.mockReturnValue(JSON.stringify([
+        { id: "Notes/win0/1", role: "AXTextField", name: "Search" },
+      ]));
+      const platform = new MacOSPlatform();
+
+      await platform.findElement({ text: "Search", role: "AXTextField", app: "Notes" });
+
+      vi.advanceTimersByTime(31_000);
+
+      execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+      await platform.setElementValue("Notes/win0/1", "hello", "Notes");
+
+      const script = lastJxaScript();
+      const cachedMatch = script.match(/var cached = (null|\{[^}]+\})/s);
+      expect(cachedMatch).toBeTruthy();
+      expect(cachedMatch![1]).toBe("null");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps cache entries within TTL and passes cached descriptor to JXA", async () => {
+    vi.useFakeTimers();
+    try {
+      execFileSyncMock.mockReturnValue(JSON.stringify([
+        { id: "Notes/win0/1", role: "AXButton", name: "Save" },
+      ]));
+      const platform = new MacOSPlatform();
+
+      await platform.findElement({ text: "Save", role: "AXButton", app: "Notes" });
+
+      // Stay within TTL
+      vi.advanceTimersByTime(10_000);
+
+      execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+      await platform.clickElement("Notes/win0/1", "Notes");
+
+      const script = lastJxaScript();
+      const cachedMatch = script.match(/var cached = (null|\{[^}]+\})/s);
+      expect(cachedMatch).toBeTruthy();
+      expect(cachedMatch![1]).not.toBe("null");
+      const cachedObj = JSON.parse(cachedMatch![1]);
+      expect(cachedObj.role).toBe("AXButton");
+      expect(cachedObj.name).toBe("Save");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("evicts oldest cache entries when exceeding maxSize (LRU)", async () => {
+    // Populate cache with 100+ entries, then verify the oldest is gone
+    execFileSyncMock.mockImplementation((_cmd: string, _args: string[]) => {
+      // Return a unique result each call by inspecting the script
+      return JSON.stringify([
+        { id: "App/win0/1", role: "AXButton", name: "Btn" },
+      ]);
+    });
+
+    const platform = new MacOSPlatform();
+
+    // findElement 101 times with different apps to create 101 distinct cache entries
+    for (let i = 0; i < 101; i++) {
+      execFileSyncMock.mockReturnValue(JSON.stringify([
+        { id: `App${i}/win0/1`, role: "AXButton", name: `Btn${i}` },
+      ]));
+      await platform.findElement({ text: `Btn${i}`, app: `App${i}` });
+    }
+
+    // The first entry (App0) should have been evicted.
+    // Verify by calling clickElement for App0 — the cached descriptor should be null
+    execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+    await platform.clickElement("App0/win0/1", "App0");
+
+    const script = lastJxaScript();
+    const cachedMatch = script.match(/var cached = (null|\{[^}]+\})/s);
+    expect(cachedMatch).toBeTruthy();
+    expect(cachedMatch![1]).toBe("null");
+
+    // A recent entry (App100) should still be cached
+    execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+    await platform.clickElement("App100/win0/1", "App100");
+
+    const script2 = lastJxaScript();
+    const cachedMatch2 = script2.match(/var cached = (null|\{[^}]+\})/s);
+    expect(cachedMatch2).toBeTruthy();
+    expect(cachedMatch2![1]).not.toBe("null");
+    const cachedObj = JSON.parse(cachedMatch2![1]);
+    expect(cachedObj.role).toBe("AXButton");
+    expect(cachedObj.name).toBe("Btn100");
+  });
+
+  it("includes subrole and identifier in cached descriptors from findElement", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify([
+      {
+        id: "Notes/win0/1",
+        role: "AXButton",
+        name: "Save",
+        subrole: "AXButtonSubrole",
+        identifier: "save-btn",
+      },
+    ]));
+    const platform = new MacOSPlatform();
+
+    await platform.findElement({ text: "Save", role: "AXButton", app: "Notes" });
+
+    // Check that subsequent clickElement receives the subrole and identifier
+    execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+    await platform.clickElement("Notes/win0/1", "Notes");
+
+    const script = lastJxaScript();
+    const cachedMatch = script.match(/var cached = (\{[^}]+\})/s);
+    expect(cachedMatch).toBeTruthy();
+    const cachedObj = JSON.parse(cachedMatch![1]);
+    expect(cachedObj.subrole).toBe("AXButtonSubrole");
+    expect(cachedObj.identifier).toBe("save-btn");
+  });
+
+  it("scoreEquivalent JXA includes subrole and identifier matching", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify([
+      {
+        id: "Notes/win0/1",
+        role: "AXButton",
+        name: "Save",
+        subrole: "AXButtonSubrole",
+        identifier: "save-btn",
+      },
+    ]));
+    const platform = new MacOSPlatform();
+
+    await platform.findElement({ text: "Save", role: "AXButton", app: "Notes" });
+
+    // Verify clickElement's JXA script contains subrole/identifier scoring
+    execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+    await platform.clickElement("Notes/win0/1", "Notes");
+
+    const script = lastJxaScript();
+    expect(script).toContain("e.subrole()");
+    expect(script).toContain("e.identifier()");
+    expect(script).toContain("cached.subrole");
+    expect(script).toContain("cached.identifier");
+    // Verify the scoring weights: subrole += 2, identifier += 3
+    expect(script).toMatch(/cached\.subrole.*score \+= 2/);
+    expect(script).toMatch(/cached\.identifier.*score \+= 3/);
+  });
+
+  it("scoreEquivalent JXA includes subrole and identifier in typeInElement", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify([
+      {
+        id: "Notes/win0/1",
+        role: "AXTextField",
+        name: "Search",
+        subrole: "AXSearchField",
+        identifier: "search-field",
+      },
+    ]));
+    const platform = new MacOSPlatform();
+
+    await platform.findElement({ text: "Search", role: "AXTextField", app: "Notes" });
+
+    execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+    await platform.typeInElement("Notes/win0/1", "hello", "Notes");
+
+    const script = lastJxaScript();
+    expect(script).toContain("e.subrole()");
+    expect(script).toContain("e.identifier()");
+    expect(script).toMatch(/cached\.subrole.*score \+= 2/);
+    expect(script).toMatch(/cached\.identifier.*score \+= 3/);
+  });
+
+  it("scoreEquivalent JXA includes subrole and identifier in setElementValue", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify([
+      {
+        id: "Notes/win0/1",
+        role: "AXTextField",
+        name: "Search",
+        subrole: "AXSearchField",
+        identifier: "search-field",
+      },
+    ]));
+    const platform = new MacOSPlatform();
+
+    await platform.findElement({ text: "Search", role: "AXTextField", app: "Notes" });
+
+    execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+    await platform.setElementValue("Notes/win0/1", "hello", "Notes");
+
+    const script = lastJxaScript();
+    expect(script).toContain("e.subrole()");
+    expect(script).toContain("e.identifier()");
+    expect(script).toMatch(/cached\.subrole.*score \+= 2/);
+    expect(script).toMatch(/cached\.identifier.*score \+= 3/);
+  });
+});

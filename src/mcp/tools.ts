@@ -30,26 +30,6 @@ const safety = new SafetyGuard();
 let lastCursorPos = { x: 0, y: 0 };
 let userActivityInterval: ReturnType<typeof setInterval> | undefined;
 
-function startUserActivityMonitor(): void {
-  if (userActivityInterval) return;
-  userActivityInterval = setInterval(() => {
-    try {
-      const pos = getPlatform().getCursorPosition();
-      if (pos.x !== lastCursorPos.x || pos.y !== lastCursorPos.y) {
-        safety.recordUserActivity();
-        lastCursorPos = pos;
-      }
-    } catch { /* can't check cursor */ }
-  }, 250);
-}
-
-function stopUserActivityMonitor(): void {
-  if (userActivityInterval) {
-    clearInterval(userActivityInterval);
-    userActivityInterval = undefined;
-  }
-}
-
 const captureAfterFields = {
   captureAfter: z.boolean().default(false).describe("Take a screenshot after the action completes and include it in the response"),
   captureMaxWidth: z.number().default(1280).describe("Maximum width for the post-action screenshot"),
@@ -92,6 +72,26 @@ async function appendCaptureAfter(result: unknown, captureAfter?: boolean): Prom
     const buf = await getPlatform().screenshot();
     return { actionResult: result, screenshot: { type: "image", data: buf.toString("base64"), mimeType: "image/png" } };
   } catch { return result; }
+}
+
+export function startUserActivityMonitor(): void {
+  if (userActivityInterval) return;
+  userActivityInterval = setInterval(() => {
+    try {
+      const pos = getPlatform().getCursorPosition();
+      if (pos.x !== lastCursorPos.x || pos.y !== lastCursorPos.y) {
+        safety.recordUserActivity();
+        lastCursorPos = pos;
+      }
+    } catch { /* can't check cursor */ }
+  }, 250);
+}
+
+function stopUserActivityMonitor(): void {
+  if (userActivityInterval) {
+    clearInterval(userActivityInterval);
+    userActivityInterval = undefined;
+  }
 }
 
 export function registerTools(server: McpServer): void {
@@ -330,8 +330,6 @@ export function registerTools(server: McpServer): void {
 
   log.info("Registered tools", { count: registry.tools.length, tools: registry.tools.join(", ") });
 
-  // Start user activity monitoring
-  startUserActivityMonitor();
 }
 export class ToolRegistry {
   private static _instance: ToolRegistry | undefined;

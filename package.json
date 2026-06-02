@@ -1,7 +1,7 @@
 {
   "name": "ucu-mcp",
   "version": "0.1.0",
-  "description": "MCP server for Universal Computer Use — desktop automation for AI agents via Model Context Protocol",
+  "description": "MCP server for Universal Computer Use \u2014 desktop automation for AI agents via Model Context Protocol",
   "type": "module",
   "bin": {
     "ucu-mcp": "./dist/bin/ucu-mcp.js"
@@ -11,7 +11,8 @@
     "dist/src/",
     "dist/index.js",
     "dist/index.d.ts",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -29,11 +30,12 @@
     "computer-use",
     "desktop-automation",
     "macos",
-    "accessibility"
+    "accessibility",
+    "ai-agent"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kaguya/ucu-mcp.git"
+    "url": "git+https://github.com/2876674942/ucu-mcp-backup.git"
   },
   "license": "MIT",
   "dependencies": {

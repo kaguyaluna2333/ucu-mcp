@@ -1,8 +1,36 @@
+# Source code
 src/
-tests/
-docs/
-.claude/
+bin/
 *.ts
-tsconfig.json
+!*.d.ts
+
+# Tests
+tests/
 vitest.config.ts
-dist/tests/
+
+# Build config
+tsconfig.json
+tsconfig.build.json
+
+# Documentation (non-essential)
+docs/
+ARCHITECTURE.md
+.claude/
+.codegraph/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# CI / misc
+.github/
+*.log
+coverage/
+node_modules/.cache/

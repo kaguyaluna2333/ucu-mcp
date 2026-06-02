@@ -14,18 +14,59 @@ interface CachedElementDescriptor {
   name: string;
   value?: string;
   description?: string;
+  subrole?: string;
+  identifier?: string;
   bounds?: {
     x: number;
     y: number;
     width: number;
     height: number;
   };
+  cachedAt: number;
 }
 
 export class MacOSPlatform implements Platform {
   private readonly elementCache = new Map<string, CachedElementDescriptor>();
+  private readonly elementCacheTtlMs = 30_000;
+  private readonly elementCacheMaxSize = 100;
   private activeTarget: AppTarget | undefined;
   private savedFocus: { appName: string; windowTitle: string } | undefined;
+
+  // ── Element Cache Management ────────────────────────────────────────────
+
+  /** Remove expired entries from the element cache. */
+  private evictExpiredCacheEntries(): void {
+    const now = Date.now();
+    for (const [key, descriptor] of this.elementCache) {
+      if (now - descriptor.cachedAt > this.elementCacheTtlMs) {
+        this.elementCache.delete(key);
+      }
+    }
+  }
+
+  /** Evict oldest entries when cache exceeds the maximum size (LRU-style). */
+  private evictOverflowCacheEntries(): void {
+    while (this.elementCache.size > this.elementCacheMaxSize) {
+      let oldestKey: string | null = null;
+      let oldestTime = Infinity;
+      for (const [key, descriptor] of this.elementCache) {
+        if (descriptor.cachedAt < oldestTime) {
+          oldestTime = descriptor.cachedAt;
+          oldestKey = key;
+        }
+      }
+      if (oldestKey !== null) {
+        this.elementCache.delete(oldestKey);
+      } else {
+        break;
+      }
+    }
+  }
+
+  /** Check whether a cached element descriptor has expired. */
+  private isCacheEntryExpired(descriptor: CachedElementDescriptor): boolean {
+    return Date.now() - descriptor.cachedAt > this.elementCacheTtlMs;
+  }
 
   // ── Focus Management ────────────────────────────────────────────────────
 
@@ -651,6 +692,7 @@ export class MacOSPlatform implements Platform {
   // ── Accessibility (AX) Element Actions ───────────────────────────────────
 
   async findElement(options: FindElementOptions): Promise<FindElementResult[]> {
+    this.evictExpiredCacheEntries();
     const { text, role, app, depth, includeBounds = true } = options;
     const effectiveApp = app || this.activeTarget?.appName;
     const maxDepth = Math.min(depth || 5, 10);
@@ -713,21 +755,29 @@ export class MacOSPlatform implements Platform {
             role: '',
             name: '',
             value: undefined,
-            description: undefined
+            description: undefined,
+            subrole: undefined,
+            identifier: undefined
           };
           var elemName = '';
           var elemRole = '';
           var elemDesc = '';
           var elemValue = '';
+          var elemSubrole = '';
+          var elemIdentifier = '';
           try { elemName = elem.name() || ''; } catch(e) {}
           try { elemRole = elem.role() || ''; } catch(e) {}
           try { elemDesc = elem.description() || ''; } catch(e) {}
           try { var v = elem.value(); elemValue = (v !== undefined && v !== null) ? String(v) : ''; } catch(e) {}
+          try { elemSubrole = elem.subrole() || ''; } catch(e) {}
+          try { elemIdentifier = elem.identifier() || ''; } catch(e) {}
 
           item.role = elemRole;
           item.name = elemName;
           if (elemValue) item.value = elemValue;
           if (elemDesc) item.description = elemDesc;
+          if (elemSubrole) item.subrole = elemSubrole;
+          if (elemIdentifier) item.identifier = elemIdentifier;
           if (includeBounds) item.bounds = getBounds(elem);
           results.push(item);
           resultCount[0]++;
@@ -783,9 +833,13 @@ export class MacOSPlatform implements Platform {
           name: result.name,
           value: result.value,
           description: result.description,
+          subrole: (result as any).subrole,
+          identifier: (result as any).identifier,
           bounds: result.bounds,
+          cachedAt: Date.now(),
         });
       }
+      this.evictOverflowCacheEntries();
       return results;
     } catch (error: any) {
       if (String(error.message || error).includes("not allowed") ||
@@ -798,11 +852,15 @@ export class MacOSPlatform implements Platform {
   }
 
   async clickElement(elementId: string, app?: string): Promise<void> {
+    this.evictExpiredCacheEntries();
     const escapedElementId = elementId.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
     const effectiveApp = app || this.activeTarget?.appName;
     const escapedApp = (effectiveApp || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
     const cached = this.elementCache.get(elementId);
-    const cachedJson = JSON.stringify(cached ?? null);
+    if (cached && this.isCacheEntryExpired(cached)) {
+      this.elementCache.delete(elementId);
+    }
+    const cachedJson = JSON.stringify(this.elementCache.get(elementId) ?? null);
 
     const jxaScript = `
       var se = Application('System Events');
@@ -880,10 +938,14 @@ export class MacOSPlatform implements Platform {
         var name = elemString(elem, function(e) { return e.name(); });
         var desc = elemString(elem, function(e) { return e.description(); });
         var value = elemString(elem, function(e) { return e.value(); });
+        var subrole = elemString(elem, function(e) { return e.subrole(); });
+        var identifier = elemString(elem, function(e) { return e.identifier(); });
         if (cached.role && role === cached.role) score += 4;
         if (cached.name && name === cached.name) score += 4;
         if (cached.value && value === cached.value) score += 3;
         if (cached.description && desc === cached.description) score += 2;
+        if (cached.subrole && subrole === cached.subrole) score += 2;
+        if (cached.identifier && identifier === cached.identifier) score += 3;
         var b = getBounds(elem);
         if (cached.bounds) {
           var cx = b.x + b.width / 2;
@@ -1021,12 +1083,16 @@ export class MacOSPlatform implements Platform {
   }
 
   async typeInElement(elementId: string, text: string, app?: string, clearFirst?: boolean): Promise<void> {
+    this.evictExpiredCacheEntries();
     const escapedText = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
     const effectiveApp = app || this.activeTarget?.appName;
     const escapedApp = (effectiveApp || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
     const escapedElementId = elementId.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
     const cached = this.elementCache.get(elementId);
-    const cachedJson = JSON.stringify(cached ?? null);
+    if (cached && this.isCacheEntryExpired(cached)) {
+      this.elementCache.delete(elementId);
+    }
+    const cachedJson = JSON.stringify(this.elementCache.get(elementId) ?? null);
 
     const jxaScript = `
       var se = Application('System Events');
@@ -1106,10 +1172,14 @@ export class MacOSPlatform implements Platform {
         var name = elemString(elem, function(e) { return e.name(); });
         var desc = elemString(elem, function(e) { return e.description(); });
         var value = elemString(elem, function(e) { return e.value(); });
+        var subrole = elemString(elem, function(e) { return e.subrole(); });
+        var identifier = elemString(elem, function(e) { return e.identifier(); });
         if (cached.role && role === cached.role) score += 4;
         if (cached.name && name === cached.name) score += 4;
         if (cached.value && value === cached.value) score += 3;
         if (cached.description && desc === cached.description) score += 2;
+        if (cached.subrole && subrole === cached.subrole) score += 2;
+        if (cached.identifier && identifier === cached.identifier) score += 3;
         var b = getBounds(elem);
         if (cached.bounds) {
           var cx = b.x + b.width / 2;
@@ -1257,12 +1327,16 @@ export class MacOSPlatform implements Platform {
   }
 
   async setElementValue(elementId: string, value: string, app?: string): Promise<void> {
+    this.evictExpiredCacheEntries();
     const effectiveApp = app || this.activeTarget?.appName;
     const valueLiteral = JSON.stringify(value);
     const appLiteral = JSON.stringify(effectiveApp || "");
     const elementIdLiteral = JSON.stringify(elementId);
     const cached = this.elementCache.get(elementId);
-    const cachedJson = JSON.stringify(cached ?? null);
+    if (cached && this.isCacheEntryExpired(cached)) {
+      this.elementCache.delete(elementId);
+    }
+    const cachedJson = JSON.stringify(this.elementCache.get(elementId) ?? null);
 
     const jxaScript = `
       var se = Application('System Events');
@@ -1366,10 +1440,14 @@ export class MacOSPlatform implements Platform {
         var name = elemString(elem, function(e) { return e.name(); });
         var desc = elemString(elem, function(e) { return e.description(); });
         var value = elemString(elem, function(e) { return e.value(); });
+        var subrole = elemString(elem, function(e) { return e.subrole(); });
+        var identifier = elemString(elem, function(e) { return e.identifier(); });
         if (cached.role && role === cached.role) score += 4;
         if (cached.name && name === cached.name) score += 4;
         if (cached.value && value === cached.value) score += 3;
         if (cached.description && desc === cached.description) score += 2;
+        if (cached.subrole && subrole === cached.subrole) score += 2;
+        if (cached.identifier && identifier === cached.identifier) score += 3;
         var b = getBounds(elem);
         if (cached.bounds) {
           var cx = b.x + b.width / 2;
@@ -1451,8 +1529,9 @@ export class MacOSPlatform implements Platform {
       if (!result.success) {
         throw new Error(result.error || `set_value failed for element ${elementId}`);
       }
-      if (cached) {
-        this.elementCache.set(elementId, { ...cached, value });
+      const currentCached = this.elementCache.get(elementId);
+      if (currentCached) {
+        this.elementCache.set(elementId, { ...currentCached, value, cachedAt: Date.now() });
       }
     } catch (error: any) {
       if (error.message && error.message.includes("set_value failed")) throw error;
