@@ -1,0 +1,8 @@
+src/
+tests/
+docs/
+.claude/
+*.ts
+tsconfig.json
+vitest.config.ts
+dist/tests/

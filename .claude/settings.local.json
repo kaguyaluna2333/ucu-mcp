@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(obsidian search *)",
+      "mcp__plugin_hindsight-memory_hindsight__agent_knowledge_get_current_bank",
+      "mcp__plugin_hindsight-memory_hindsight__agent_knowledge_list_pages",
+      "mcp__plugin_hindsight-memory_hindsight__agent_knowledge_recall",
+      "mcp__plugin_hindsight-memory_hindsight__agent_knowledge_create_page"
+    ]
+  }
+}

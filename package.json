@@ -1,0 +1,48 @@
+{
+  "name": "ucu-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Universal Computer Use — desktop automation for AI agents via Model Context Protocol",
+  "type": "module",
+  "bin": {
+    "ucu-mcp": "./dist/bin/ucu-mcp.js"
+  },
+  "files": [
+    "dist/bin/",
+    "dist/src/",
+    "dist/index.js",
+    "dist/index.d.ts",
+    "README.md"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/bin/ucu-mcp.js",
+    "dev": "tsx bin/ucu-mcp.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run tests/integration/",
+    "test:macos-gui": "UCU_MACOS_GUI_SMOKE=1 vitest run tests/integration/macos-gui-smoke.test.ts"
+  },
+  "keywords": [
+    "mcp",
+    "computer-use",
+    "desktop-automation",
+    "macos",
+    "accessibility"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kaguya/ucu-mcp.git"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.7"
+  }
+}
