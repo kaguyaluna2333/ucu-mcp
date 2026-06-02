@@ -153,4 +153,8 @@ export interface Platform {
 
   // Safety State
   isScreenLocked?(): boolean;
+
+  // Focus Management
+  saveFocus?(): Promise<void>;
+  restoreFocus?(): Promise<void>;
 }

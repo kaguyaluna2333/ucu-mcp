@@ -26,6 +26,30 @@ function getPlatform(): Platform {
 }
 const safety = new SafetyGuard();
 
+// User activity monitor — pauses automation when user moves the cursor
+let lastCursorPos = { x: 0, y: 0 };
+let userActivityInterval: ReturnType<typeof setInterval> | undefined;
+
+function startUserActivityMonitor(): void {
+  if (userActivityInterval) return;
+  userActivityInterval = setInterval(() => {
+    try {
+      const pos = getPlatform().getCursorPosition();
+      if (pos.x !== lastCursorPos.x || pos.y !== lastCursorPos.y) {
+        safety.recordUserActivity();
+        lastCursorPos = pos;
+      }
+    } catch { /* can't check cursor */ }
+  }, 250);
+}
+
+function stopUserActivityMonitor(): void {
+  if (userActivityInterval) {
+    clearInterval(userActivityInterval);
+    userActivityInterval = undefined;
+  }
+}
+
 const captureAfterFields = {
   captureAfter: z.boolean().default(false).describe("Take a screenshot after the action completes and include it in the response"),
   captureMaxWidth: z.number().default(1280).describe("Maximum width for the post-action screenshot"),
@@ -54,7 +78,13 @@ async function withSafety<T>(sa: SafetyAction): Promise<T> {
   if (sa.requiresAccessibility) { const { granted } = await checkPermission("accessibility"); if (!granted) throw new PermissionError("accessibility", process.platform); }
   if (sa.requiresScreenRecording) { const { granted } = await checkPermission("screenRecording"); if (!granted) throw new PermissionError("screenRecording", process.platform); }
   if (sa.dryRun) return `[DRY-RUN] ${await sa.dryRun()}` as T;
-  return retry(() => sa.execute() as Promise<T>);
+  const shouldManageFocus = sa.requiresAccessibility && !["screenshot", "list_windows", "list_apps", "get_window_state", "get_cursor_position", "get_screen_size", "ocr", "doctor", "wait", "wait_for_element", "find_element", "focus_app"].includes(sa.action);
+  if (shouldManageFocus) await platform.saveFocus?.();
+  try {
+    return await retry(() => sa.execute() as Promise<T>);
+  } finally {
+    if (shouldManageFocus) await platform.restoreFocus?.();
+  }
 }
 async function appendCaptureAfter(result: unknown, captureAfter?: boolean): Promise<unknown> {
   if (!captureAfter) return result;
@@ -299,6 +329,9 @@ export function registerTools(server: McpServer): void {
   registry.register("type_in_element");
 
   log.info("Registered tools", { count: registry.tools.length, tools: registry.tools.join(", ") });
+
+  // Start user activity monitoring
+  startUserActivityMonitor();
 }
 export class ToolRegistry {
   private static _instance: ToolRegistry | undefined;

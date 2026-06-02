@@ -9,3 +9,4 @@ export {
   type PermissionCheckResult,
   type PermissionType,
 } from "./safety/permissions.js";
+export { MacOSPlatform } from "./platform/macos.js";

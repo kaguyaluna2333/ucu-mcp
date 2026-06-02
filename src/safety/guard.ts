@@ -125,6 +125,8 @@ export class SafetyGuard {
   private readonly allowUnsafeText: boolean;
   private readonly rateLimitMs: number;
   private lastActionTime = 0;
+  private lastUserActivityTime = 0;
+  private userActivityPauseMs = 2000;
 
   constructor(config?: SafetyGuardConfig) {
     const extra = (config?.blockedKeys ?? []).map(normalizeShortcut);
@@ -236,6 +238,34 @@ export class SafetyGuard {
     }
     this.lastActionTime = now;
 
+    // 6. User activity pause --------------------------------------------------
+    if (this.isUserActivityPauseActive()) {
+      return {
+        allowed: false,
+        reason: `User activity detected — pausing automation for ${this.userActivityPauseMs}ms`,
+      };
+    }
+
     return { allowed: true };
+  }
+
+  // -----------------------------------------------------------------------
+  // User Activity Monitoring
+  // -----------------------------------------------------------------------
+
+  /** Record that the user performed an activity (mouse/keyboard). */
+  recordUserActivity(): void {
+    this.lastUserActivityTime = Date.now();
+  }
+
+  /** Set the pause duration after user activity (default 2000ms). */
+  setUserActivityPauseMs(ms: number): void {
+    this.userActivityPauseMs = ms;
+  }
+
+  /** Check if user activity pause is still active. */
+  isUserActivityPauseActive(): boolean {
+    if (this.userActivityPauseMs <= 0) return false;
+    return Date.now() - this.lastUserActivityTime < this.userActivityPauseMs;
   }
 }

@@ -96,4 +96,28 @@ describe("SafetyGuard", () => {
     const result = guard.checkAction("type_text", { text: "hello $(example)" });
     expect(result.allowed).toBe(true);
   });
+  it("should block actions during user activity pause", () => {
+    const guard = new SafetyGuard();
+    guard.recordUserActivity();
+    const result = guard.checkAction("click", { x: 100, y: 200 });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("User activity detected");
+  });
+
+  it("should allow actions after user activity pause expires", async () => {
+    const guard = new SafetyGuard();
+    guard.setUserActivityPauseMs(50);
+    guard.recordUserActivity();
+    await new Promise((r) => setTimeout(r, 100));
+    const result = guard.checkAction("click", { x: 100, y: 200 });
+    expect(result.allowed).toBe(true);
+  });
+
+  it("should allow actions when user activity pause is disabled", () => {
+    const guard = new SafetyGuard();
+    guard.setUserActivityPauseMs(0);
+    guard.recordUserActivity();
+    const result = guard.checkAction("click", { x: 100, y: 200 });
+    expect(result.allowed).toBe(true);
+  });
 });

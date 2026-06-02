@@ -25,6 +25,41 @@ interface CachedElementDescriptor {
 export class MacOSPlatform implements Platform {
   private readonly elementCache = new Map<string, CachedElementDescriptor>();
   private activeTarget: AppTarget | undefined;
+  private savedFocus: { appName: string; windowTitle: string } | undefined;
+
+  // ── Focus Management ────────────────────────────────────────────────────
+
+  /** Save the current frontmost app/window so we can restore after an action. */
+  async saveFocus(): Promise<void> {
+    try {
+      const apps = await this.listApps();
+      const front = apps.find((a) => a.isFrontmost);
+      if (front) {
+        const windows = await this.listWindows();
+        const win = windows.find((w) => w.processName === front.name && w.isOnScreen);
+        this.savedFocus = {
+          appName: front.name,
+          windowTitle: win?.title ?? "",
+        };
+      }
+    } catch {
+      this.savedFocus = undefined;
+    }
+  }
+
+  /** Restore the previously saved frontmost app/window. */
+  async restoreFocus(): Promise<void> {
+    if (!this.savedFocus) return;
+    try {
+      const { appName } = this.savedFocus;
+      execFileSync("osascript", [
+        "-e", `tell application "${appName}" to activate`,
+      ], { timeout: 5000 });
+    } catch {
+      // Best effort — don't fail the action if restore fails
+    }
+    this.savedFocus = undefined;
+  }
 
   // ── Screenshot ──────────────────────────────────────────────────────────
 
