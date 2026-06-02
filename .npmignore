@@ -34,3 +34,4 @@ ARCHITECTURE.md
 *.log
 coverage/
 node_modules/.cache/
+*.map
