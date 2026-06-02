@@ -1,10 +1,10 @@
 {
   "name": "ucu-mcp",
-  "version": "0.1.0",
-  "description": "MCP server for Universal Computer Use \u2014 desktop automation for AI agents via Model Context Protocol",
+  "version": "0.1.1",
+  "description": "MCP server for Universal Computer Use — desktop automation for AI agents via Model Context Protocol",
   "type": "module",
   "bin": {
-    "ucu-mcp": "./dist/bin/ucu-mcp.js"
+    "ucu-mcp": "dist/bin/ucu-mcp.js"
   },
   "files": [
     "dist/bin/",
