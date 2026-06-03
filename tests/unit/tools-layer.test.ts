@@ -68,7 +68,7 @@ beforeAll(async () => {
   const orig = server.tool.bind(server);
   (server as any).tool = function (name: string, desc: string, schema: unknown, handler: TH) {
     tools.set(name, { handler });
-    return orig(name, desc, schema, handler);
+    return (orig as any)(name, desc, schema, handler);
   };
   ToolRegistry["_instance"] = undefined;
   registerTools(server);

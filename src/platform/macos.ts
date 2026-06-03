@@ -540,11 +540,9 @@ export class MacOSPlatform implements Platform {
       const out = execFileSync("osascript", [
         "-l", "JavaScript",
         "-e",
-        `ObjC.import('CoreGraphics');
-        var event = $.CGEventCreate(null);
-        var loc = $.CGEventGetLocation(event);
-        $.CFRelease(event);
-        JSON.stringify({x:Math.round(loc.x),y:Math.round(loc.y)})`,
+        `ObjC.import('AppKit');
+        var pt = $.NSEvent.mouseLocation;
+        JSON.stringify({x:Math.round(pt.x),y:Math.round($.NSScreen.mainScreen.frame.size.height - pt.y)});`,
       ], { encoding: "utf-8", timeout: 5000 }).trim();
       return JSON.parse(out) as CursorPosition;
     } catch (error: any) {
