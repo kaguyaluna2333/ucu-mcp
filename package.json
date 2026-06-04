@@ -1,12 +1,13 @@
 {
   "name": "ucu-mcp",
   "version": "0.1.3",
-  "description": "MCP server for Universal Computer Use — desktop automation for AI agents via Model Context Protocol",
+  "description": "MCP server for Universal Computer Use \u2014 desktop automation for AI agents via Model Context Protocol",
   "type": "module",
   "bin": {
     "ucu-mcp": "dist/bin/ucu-mcp.js"
   },
   "files": [
+    "native/",
     "dist/bin/",
     "dist/src/",
     "dist/index.js",
@@ -17,13 +18,14 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run build:native",
     "start": "node dist/bin/ucu-mcp.js",
     "dev": "tsx bin/ucu-mcp.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run tests/integration/",
-    "test:macos-gui": "UCU_MACOS_GUI_SMOKE=1 vitest run tests/integration/macos-gui-smoke.test.ts"
+    "test:macos-gui": "UCU_MACOS_GUI_SMOKE=1 vitest run tests/integration/macos-gui-smoke.test.ts",
+    "build:native": "cd native/cgevent && swiftc -O -o cgevent-helper main.swift -framework CoreGraphics -framework Foundation"
   },
   "keywords": [
     "mcp",
