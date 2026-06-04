@@ -10,11 +10,50 @@
  * Linux: Uses xdotool (stub).
  */
 
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { logger } from "../util/logger.js";
 
 const execFileAsync = promisify(execFile);
+
+// ── Native CGEvent helper (macOS) ──────────────────────────────────────
+// JXA (osascript -l JavaScript) cannot call CGEventPost without segfault.
+// We ship a small Swift binary that does native CGEvent injection instead.
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+// In dev: src/utils/input.ts → native/cgevent/cgevent-helper
+// In prod: dist/src/utils/input.js → dist/native/cgevent/cgevent-helper
+const nativeHelperPath = join(__dirname, "..", "..", "native", "cgevent", "cgevent-helper");
+
+let _nativeAvailable: boolean | undefined;
+function isNativeAvailable(): boolean {
+  if (_nativeAvailable !== undefined) return _nativeAvailable;
+  try {
+    const stdout = execFileSync(nativeHelperPath, [], {
+      input: '{"command":"ping"}',
+      encoding: "utf8",
+      timeout: 3000,
+    });
+    _nativeAvailable = stdout.includes('"ok"');
+  } catch {
+    _nativeAvailable = false;
+  }
+  return _nativeAvailable;
+}
+
+function runNativeChecked(payload: Record<string, unknown>): void {
+  const raw = execFileSync(nativeHelperPath, [], {
+    input: JSON.stringify(payload),
+    encoding: "utf8",
+    timeout: 10000,
+  }).trim();
+  const resp = JSON.parse(raw);
+  if (resp.error) {
+    throw new Error(`native helper error: ${resp.error}`);
+  }
+}
 
 // ── Dry-run mode ──────────────────────────────────────────────────────────
 
@@ -81,6 +120,10 @@ export async function click(
     return;
   }
   if (_platform === "darwin") {
+    if (isNativeAvailable()) {
+      runNativeChecked({ command: "click", x, y, button });
+      return;
+    }
     const btnType = { left: 0, right: 1, middle: 2 }[button];
     await runJXA(`
       ObjC.import('CoreGraphics');
@@ -114,6 +157,11 @@ export async function doubleClick(
     return;
   }
   if (_platform === "darwin") {
+    if (isNativeAvailable()) {
+      runNativeChecked({ command: "doubleClick", x, y, button });
+      return;
+    }
+
     const btnType = { left: 0, right: 1, middle: 2 }[button];
     await runJXA(`
       ObjC.import('CoreGraphics');
@@ -152,6 +200,10 @@ export async function move(
     return;
   }
   if (_platform === "darwin") {
+    if (isNativeAvailable()) {
+      runNativeChecked({ command: "move", x, y });
+      return;
+    }
     await runJXA(`
       ObjC.import('CoreGraphics');
       var loc = $.CGPointMake(${x}, ${y});
@@ -180,6 +232,11 @@ export async function drag(
     return;
   }
   if (_platform === "darwin") {
+    if (isNativeAvailable()) {
+      runNativeChecked({ command: "drag", fromX, fromY, toX, toY, button, durationMs: duration });
+      return;
+    }
+
     const btnType = { left: 0, right: 1, middle: 2 }[button];
     const steps = Math.max(2, Math.min(60, Math.ceil(duration / 16)));
     const delayMicros = Math.max(0, Math.floor((duration * 1000) / steps));
@@ -232,6 +289,10 @@ export async function scroll(
     return;
   }
   if (_platform === "darwin") {
+    if (isNativeAvailable()) {
+      runNativeChecked({ command: "scroll", x, y, deltaX, deltaY });
+      return;
+    }
     const verticalDelta = -deltaY;
     const horizontalDelta = deltaX;
     await runJXA(`
@@ -364,23 +425,27 @@ export async function typeText(
     // Process each batch
     for (const batch of batches) {
       if (batch.cgEvent && Array.isArray(batch.chars)) {
-        // Build a single JXA script that types all chars in this CGEvent batch
-        const keyStatements = (batch.chars as Array<{ code: number; shift: boolean }>).map(({ code, shift }) => {
-          const flags = shift ? SHIFT_FLAG : 0;
-          return `
-            kd = $.CGEventCreateKeyboardEvent(null, ${code}, true);
-            ku = $.CGEventCreateKeyboardEvent(null, ${code}, false);
-            if (${flags}) { $.CGEventSetFlags(kd, ${flags}); $.CGEventSetFlags(ku, ${flags}); }
-            $.CGEventPost(0, kd);
-            $.CGEventPost(0, ku);
-            $.CFRelease(kd);
-            $.CFRelease(ku);`;
-        }).join("\n");
-        await runJXA(`
-          ObjC.import('CoreGraphics');
-          var kd, ku;
-          ${keyStatements}
-        `);
+        if (isNativeAvailable()) {
+          runNativeChecked({ command: "typeBatch", keys: batch.chars });
+        } else {
+          // Build a single JXA script that types all chars in this CGEvent batch
+          const keyStatements = (batch.chars as Array<{ code: number; shift: boolean }>).map(({ code, shift }) => {
+            const flags = shift ? SHIFT_FLAG : 0;
+            return `
+              kd = $.CGEventCreateKeyboardEvent(null, ${code}, true);
+              ku = $.CGEventCreateKeyboardEvent(null, ${code}, false);
+              if (${flags}) { $.CGEventSetFlags(kd, ${flags}); $.CGEventSetFlags(ku, ${flags}); }
+              $.CGEventPost(0, kd);
+              $.CGEventPost(0, ku);
+              $.CFRelease(kd);
+              $.CFRelease(ku);`;
+          }).join("\n");
+          await runJXA(`
+            ObjC.import('CoreGraphics');
+            var kd, ku;
+            ${keyStatements}
+          `);
+        }
       } else {
         // Fallback: use osascript keystroke for unsupported chars (emoji, CJK, etc.)
         const escaped = escapeAppleScriptString(batch.chars as string);
@@ -425,6 +490,11 @@ export async function pressKey(
         throw new Error(`Unknown modifier: ${mod}. Supported: ${Object.keys(MAC_MODIFIER_FLAGS).join(", ")}`);
       }
       flags |= flag;
+    }
+
+    if (isNativeAvailable()) {
+      runNativeChecked({ command: "pressKey", keyCode, flags });
+      return;
     }
 
     await runJXA(`
