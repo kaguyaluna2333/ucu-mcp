@@ -5,6 +5,7 @@ import {
   SafetyError,
   PermissionError,
   WindowNotFoundError,
+  ElementNotFoundError,
   CoordinateError,
   InputSynthesisError,
   UnsupportedParameterError,
@@ -77,6 +78,16 @@ describe("WindowNotFoundError", () => {
     expect(err.retryable).toBe(false);
     expect(err.message).toContain("win-42");
     expect(err.message).toContain("list_windows");
+  });
+});
+
+describe("ElementNotFoundError", () => {
+  it("uses ELEMENT_NOT_FOUND code and asks for fresh discovery", () => {
+    const err = new ElementNotFoundError("Notes/win0/1");
+    expect(err.code).toBe("ELEMENT_NOT_FOUND");
+    expect(err.retryable).toBe(false);
+    expect(err.message).toContain("Notes/win0/1");
+    expect(err.message).toContain("find_element");
   });
 });
 

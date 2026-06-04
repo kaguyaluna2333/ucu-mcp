@@ -2,10 +2,48 @@ import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import type { Platform, ScreenRegion, ScreenSize, CursorPosition, WindowInfo, WindowState, ElementInfo, OcrResult, FindElementOptions, FindElementResult, AppInfo, AppTarget, BrowserContext, ScreenshotOptions } from "./base.js";
-import { captureFullScreen, captureRegion, captureWindow } from "../utils/screenshot.js";
+import { captureFullScreen, captureRegion } from "../utils/screenshot.js";
 import { click as inputClick, doubleClick as inputDoubleClick, move as inputMove, drag as inputDrag, scroll as inputScroll, typeText, pressShortcut } from "../utils/input.js";
+import { CaptureError, ElementNotFoundError, InputSynthesisError, PermissionError, PlatformError, UcuError, WindowNotFoundError } from "../util/errors.js";
 
 const execFileAsync = promisify(execFile);
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isAccessibilityPermissionError(error: unknown): boolean {
+  return /not allowed|permission|assistive|accessibility/i.test(errorMessage(error));
+}
+
+function rethrowCaptureError(error: unknown, operation: string): never {
+  if (error instanceof UcuError) throw error;
+  throw new CaptureError(`${operation} failed: ${errorMessage(error)}`);
+}
+
+function rethrowAccessibilityError(error: unknown, operation: string): never {
+  if (error instanceof UcuError) throw error;
+  if (isAccessibilityPermissionError(error)) {
+    throw new PermissionError("accessibility", "darwin");
+  }
+  throw new PlatformError(`${operation} failed: ${errorMessage(error)}`);
+}
+
+function rethrowElementActionError(error: unknown, operation: string, elementId: string): never {
+  if (error instanceof UcuError) throw error;
+  if (isAccessibilityPermissionError(error)) {
+    throw new PermissionError("accessibility", "darwin");
+  }
+  if (/element not found/i.test(errorMessage(error))) {
+    throw new ElementNotFoundError(elementId);
+  }
+  throw new PlatformError(`${operation} failed: ${errorMessage(error)}`);
+}
+
+function rethrowInputError(error: unknown, operation: string): never {
+  if (error instanceof UcuError) throw error;
+  throw new InputSynthesisError(`${operation} failed: ${errorMessage(error)}`);
+}
 
 interface CachedElementDescriptor {
   elementId: string;
@@ -29,6 +67,8 @@ export class MacOSPlatform implements Platform {
   private readonly elementCache = new Map<string, CachedElementDescriptor>();
   private readonly elementCacheTtlMs = 30_000;
   private readonly elementCacheMaxSize = 100;
+  private readonly windowCacheTtlMs = 300;
+  private windowCache: { cachedAt: number; windows: WindowInfo[] } | undefined;
   private activeTarget: AppTarget | undefined;
   private savedFocus: { appName: string; windowTitle: string } | undefined;
 
@@ -105,15 +145,22 @@ export class MacOSPlatform implements Platform {
   // ── Screenshot ──────────────────────────────────────────────────────────
 
   async screenshot(_display?: number, region?: ScreenRegion, options?: ScreenshotOptions): Promise<Buffer> {
-    const base64 = region
-      ? await captureRegion(region.x, region.y, region.width, region.height, options)
-      : await captureFullScreen(options);
-    return Buffer.from(base64, "base64");
+    try {
+      const base64 = region
+        ? await captureRegion(region.x, region.y, region.width, region.height, options)
+        : await captureFullScreen(options);
+      return Buffer.from(base64, "base64");
+    } catch (error) {
+      rethrowCaptureError(error, region ? "capture region" : "capture full screen");
+    }
   }
 
   async screenshotWindow(windowId: string, options?: ScreenshotOptions): Promise<Buffer> {
-    const base64 = await captureWindow(windowId, options);
-    return Buffer.from(base64, "base64");
+    const win = (await this.listWindows(true)).find((w) => w.id === windowId);
+    if (!win) {
+      throw new WindowNotFoundError(windowId);
+    }
+    return this.screenshot(undefined, win.bounds, options);
   }
 
   // ── Screen Info ─────────────────────────────────────────────────────────
@@ -185,10 +232,26 @@ export class MacOSPlatform implements Platform {
 
   async focusApp(app: string): Promise<AppTarget> {
     const appLower = app.toLowerCase();
-    const windows = await this.listWindows(true);
-    const target = windows.find((w) => w.processName.toLowerCase().includes(appLower));
+    const escapedApp = app.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    this.windowCache = undefined;
+    try {
+      execFileSync("osascript", ["-e", `tell application "${escapedApp}" to activate`], { timeout: 5000 });
+    } catch {
+      // Some app names are process labels rather than AppleScript application names.
+      // Continue with the AX window lookup below so existing callers still work.
+    }
+
+    let target: WindowInfo | undefined;
+    const deadline = Date.now() + 3000;
+    do {
+      const windows = await this.listWindows(true);
+      target = windows.find((w) => w.processName.toLowerCase().includes(appLower));
+      if (target) break;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    } while (Date.now() < deadline);
+
     if (!target) {
-      throw new Error(`No on-screen window found for app "${app}". Use list_apps to inspect localized macOS app names.`);
+      throw new WindowNotFoundError(app);
     }
     this.activeTarget = {
       appName: target.processName,
@@ -252,6 +315,14 @@ export class MacOSPlatform implements Platform {
   }
 
   async listWindows(_includeMinimized?: boolean): Promise<WindowInfo[]> {
+    const now = Date.now();
+    if (this.windowCache && now - this.windowCache.cachedAt <= this.windowCacheTtlMs) {
+      return this.windowCache.windows.map((window) => ({
+        ...window,
+        bounds: { ...window.bounds },
+      }));
+    }
+
     try {
       // Use System Events instead of CGWindowListCopyWindowInfo.
       // The CoreGraphics API returns CFArrayRef/CFDictionaryRef which JXA
@@ -296,7 +367,15 @@ export class MacOSPlatform implements Platform {
         "-l", "JavaScript",
         "-e", jxaScript
       ], { encoding: "utf-8", timeout: 15000 });
-      return JSON.parse(jxaOut.trim());
+      const windows = JSON.parse(jxaOut.trim()) as WindowInfo[];
+      this.windowCache = {
+        cachedAt: Date.now(),
+        windows: windows.map((window) => ({
+          ...window,
+          bounds: { ...window.bounds },
+        })),
+      };
+      return windows;
     } catch {
       // Fallback: return empty list if JXA fails
       return [];
@@ -306,7 +385,7 @@ export class MacOSPlatform implements Platform {
   async getWindowState(windowId?: string, depth?: number, includeBounds: boolean = true): Promise<WindowState> {
     const resolvedWindowId = windowId || this.activeTarget?.windowId;
     if (!resolvedWindowId) {
-      throw new Error("getWindowState requires windowId or a prior focus_app target");
+      throw new WindowNotFoundError("active target");
     }
     const maxDepth = Math.min(depth || 3, 10);
     const maxElements = 50;
@@ -318,6 +397,11 @@ export class MacOSPlatform implements Platform {
       const jxaScript = `
         ObjC.import('AppKit');
         var se = Application('System Events');
+      function childElements(elem) {
+        try { return elem.uiElements(); } catch(e1) {
+          try { return elem.elements(); } catch(e2) { return []; }
+        }
+      }
         var result = {window: null, focusedElement: null, tree: null, error: null};
         var target = ${targetJson};
         var includeBounds = ${includeBounds ? "true" : "false"};
@@ -390,7 +474,9 @@ export class MacOSPlatform implements Platform {
               if (foundWin) break;
             }
           }
-          if (!foundWin) { result.error = 'Window not found'; JSON.stringify(result); return; }
+          if (!foundWin) {
+            result.error = 'Window not found';
+          } else {
 
           var winPos = foundWin.position();
           var winSize = foundWin.size();
@@ -476,7 +562,7 @@ export class MacOSPlatform implements Platform {
 
             if (currentDepth < ${maxDepth}) {
               try {
-                var kids = axElem.elements();
+                var kids = childElements(axElem);
                 for (var k = 0; k < kids.length && elemCount[0] < ${maxElements}; k++) {
                   var child = extractElement(kids[k], currentDepth + 1);
                   if (child) info.children.push(child);
@@ -486,7 +572,8 @@ export class MacOSPlatform implements Platform {
             return info;
           }
 
-          result.tree = extractElement(foundWin, 0);
+            result.tree = extractElement(foundWin, 0);
+          }
         } catch(e) {
           result.error = String(e.message || e);
         }
@@ -501,7 +588,7 @@ export class MacOSPlatform implements Platform {
       const parsed = JSON.parse(out);
 
       if (parsed.error && !parsed.window) {
-        throw new Error(parsed.error);
+        throw new WindowNotFoundError(resolvedWindowId);
       }
 
       const windowInfo: WindowInfo = parsed.window || {
@@ -519,36 +606,48 @@ export class MacOSPlatform implements Platform {
         focusedElement: parsed.focusedElement || undefined,
         tree: parsed.tree || undefined,
       };
-    } catch (error: any) {
-      if (String(error.message || error).includes("not allowed") ||
-          String(error.message || error).includes("permission") ||
-          String(error.message || error).includes("assistive")) {
-        throw new Error(`Accessibility permission required: grant System Events access in System Preferences > Privacy & Accessibility`);
-      }
-      throw new Error(`Window ${resolvedWindowId} not found or Accessibility permission missing`);
+    } catch (error) {
+      if (error instanceof WindowNotFoundError) throw error;
+      rethrowAccessibilityError(error, "get_window_state");
     }
   }
 
   // ── Mouse ───────────────────────────────────────────────────────────────
 
   async click(x: number, y: number, button?: "left" | "right" | "middle", doubleClick?: boolean): Promise<void> {
-    if (doubleClick) {
-      await inputDoubleClick(x, y, button);
-    } else {
-      await inputClick(x, y, button);
+    try {
+      if (doubleClick) {
+        await inputDoubleClick(x, y, button);
+      } else {
+        await inputClick(x, y, button);
+      }
+    } catch (error) {
+      rethrowInputError(error, doubleClick ? "double_click" : "click");
     }
   }
 
   async move(x: number, y: number): Promise<void> {
-    await inputMove(x, y);
+    try {
+      await inputMove(x, y);
+    } catch (error) {
+      rethrowInputError(error, "move");
+    }
   }
 
   async drag(startX: number, startY: number, endX: number, endY: number, button?: "left" | "right" | "middle", duration?: number): Promise<void> {
-    await inputDrag(startX, startY, endX, endY, button, duration);
+    try {
+      await inputDrag(startX, startY, endX, endY, button, duration);
+    } catch (error) {
+      rethrowInputError(error, "drag");
+    }
   }
 
   async scroll(x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
-    await inputScroll(x, y, deltaX, deltaY);
+    try {
+      await inputScroll(x, y, deltaX, deltaY);
+    } catch (error) {
+      rethrowInputError(error, "scroll");
+    }
   }
 
   // ── Cursor ──────────────────────────────────────────────────────────────
@@ -563,8 +662,8 @@ export class MacOSPlatform implements Platform {
         JSON.stringify({x:Math.round(pt.x),y:Math.round($.NSScreen.mainScreen.frame.size.height - pt.y)});`,
       ], { encoding: "utf-8", timeout: 5000 }).trim();
       return JSON.parse(out) as CursorPosition;
-    } catch (error: any) {
-      throw new Error(`get_cursor_position failed: ${error.message || error}`);
+    } catch (error) {
+      throw new PlatformError(`get_cursor_position failed: ${errorMessage(error)}`);
     }
   }
 
@@ -692,7 +791,7 @@ export class MacOSPlatform implements Platform {
     `;
     const out = execFileSync("osascript", ["-l", "JavaScript", "-e", jxaScript], { encoding: "utf-8", timeout: 30000 }).trim();
     const parsed = JSON.parse(out);
-    if (parsed.error) throw new Error(parsed.error);
+    if (parsed.error) throw new CaptureError(`ocr failed: ${parsed.error}`);
 
     const imgWidth = buf.readUInt32BE(16);
     const scaleFactorX = screenSize.width / (region ? region.width : (imgWidth / scaleFactor));
@@ -729,9 +828,14 @@ export class MacOSPlatform implements Platform {
     const escapedText = text ? text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$') : "";
     const escapedRole = role ? role.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$') : "";
 
-    const jxaScript = `
-      var se = Application('System Events');
-      var results = [];
+      const jxaScript = `
+        var se = Application('System Events');
+      function childElements(elem) {
+        try { return elem.uiElements(); } catch(e1) {
+          try { return elem.elements(); } catch(e2) { return []; }
+        }
+      }
+        var results = [];
       var resultCount = [0];
       var maxResults = ${maxResults};
       var includeBounds = ${includeBounds ? "true" : "false"};
@@ -813,7 +917,7 @@ export class MacOSPlatform implements Platform {
 
         if (currentDepth < ${maxDepth}) {
           try {
-            var kids = elem.elements();
+            var kids = childElements(elem);
             for (var k = 0; k < kids.length && resultCount[0] < maxResults; k++) {
               traverse(kids[k], path + '/' + k, currentDepth + 1);
             }
@@ -826,7 +930,7 @@ export class MacOSPlatform implements Platform {
           var proc = se.processes["${escapedApp}"]();
           var wins = proc.windows();
           for (var w = 0; w < wins.length && resultCount[0] < maxResults; w++) {
-            traverse(wins[w], "win" + w, 0);
+            traverse(wins[w], "${escapedApp}/win" + w, 0);
           }
         } else {
           var procs = se.processes();
@@ -869,13 +973,8 @@ export class MacOSPlatform implements Platform {
       }
       this.evictOverflowCacheEntries();
       return results;
-    } catch (error: any) {
-      if (String(error.message || error).includes("not allowed") ||
-          String(error.message || error).includes("permission") ||
-          String(error.message || error).includes("assistive")) {
-        throw new Error("Accessibility permission required: grant System Events access in System Preferences > Privacy & Accessibility");
-      }
-      throw new Error(`find_element failed: ${error.message || error}`);
+    } catch (error) {
+      rethrowAccessibilityError(error, "find_element");
     }
   }
 
@@ -892,6 +991,11 @@ export class MacOSPlatform implements Platform {
 
     const jxaScript = `
       var se = Application('System Events');
+      function childElements(elem) {
+        try { return elem.uiElements(); } catch(e1) {
+          try { return elem.elements(); } catch(e2) { return []; }
+        }
+      }
       var elemPath = "${escapedElementId}";
       var appName = "${escapedApp}";
       var cached = ${cachedJson};
@@ -918,7 +1022,7 @@ export class MacOSPlatform implements Platform {
             var idx = parseInt(parts[i]);
             if (isNaN(idx)) return null;
             try {
-              var kids = current.elements();
+              var kids = childElements(current);
               if (idx >= kids.length) return null;
               current = kids[idx];
             } catch(e) { return null; }
@@ -1003,7 +1107,7 @@ export class MacOSPlatform implements Platform {
             bestScore = score;
           }
           try {
-            var kids = elem.elements();
+            var kids = childElements(elem);
             for (var i = 0; i < kids.length; i++) visit(kids[i], depth + 1);
           } catch(e) {}
         }
@@ -1041,7 +1145,7 @@ export class MacOSPlatform implements Platform {
               var idx = parseInt(parts[i]);
               if (isNaN(idx)) break;
               try {
-                var kids = current.elements();
+                var kids = childElements(current);
                 if (idx >= kids.length) break;
                 current = kids[idx];
               } catch(e) { break; }
@@ -1098,15 +1202,12 @@ export class MacOSPlatform implements Platform {
 
       const result = JSON.parse(out);
       if (!result.success) {
-        throw new Error(result.error || `click_element failed for element ${elementId}`);
+        throw result.error
+          ? new Error(result.error)
+          : new ElementNotFoundError(elementId);
       }
-    } catch (error: any) {
-      if (error.message && error.message.includes("click_element failed")) throw error;
-      if (String(error.message || error).includes("not allowed") ||
-          String(error.message || error).includes("permission")) {
-        throw new Error("Accessibility permission required: grant System Events access in System Preferences > Privacy & Accessibility");
-      }
-      throw new Error(`click_element failed: ${error.message || error}`);
+    } catch (error) {
+      rethrowElementActionError(error, "click_element", elementId);
     }
   }
 
@@ -1124,6 +1225,11 @@ export class MacOSPlatform implements Platform {
 
     const jxaScript = `
       var se = Application('System Events');
+      function childElements(elem) {
+        try { return elem.uiElements(); } catch(e1) {
+          try { return elem.elements(); } catch(e2) { return []; }
+        }
+      }
       var elemPath = "${escapedElementId}";
       var appName = "${escapedApp}";
       var textToType = "${escapedText}";
@@ -1152,7 +1258,7 @@ export class MacOSPlatform implements Platform {
             var idx = parseInt(parts[i]);
             if (isNaN(idx)) return null;
             try {
-              var kids = current.elements();
+              var kids = childElements(current);
               if (idx >= kids.length) return null;
               current = kids[idx];
             } catch(e) { return null; }
@@ -1237,7 +1343,7 @@ export class MacOSPlatform implements Platform {
             bestScore = score;
           }
           try {
-            var kids = elem.elements();
+            var kids = childElements(elem);
             for (var i = 0; i < kids.length; i++) visit(kids[i], depth + 1);
           } catch(e) {}
         }
@@ -1275,7 +1381,7 @@ export class MacOSPlatform implements Platform {
               var idx = parseInt(parts[i]);
               if (isNaN(idx)) break;
               try {
-                var kids = current.elements();
+                var kids = childElements(current);
                 if (idx >= kids.length) break;
                 current = kids[idx];
               } catch(e) { break; }
@@ -1342,15 +1448,12 @@ export class MacOSPlatform implements Platform {
 
       const result = JSON.parse(out);
       if (!result.success) {
-        throw new Error(result.error || `type_in_element failed for element ${elementId}`);
+        throw result.error
+          ? new Error(result.error)
+          : new ElementNotFoundError(elementId);
       }
-    } catch (error: any) {
-      if (error.message && error.message.includes("type_in_element failed")) throw error;
-      if (String(error.message || error).includes("not allowed") ||
-          String(error.message || error).includes("permission")) {
-        throw new Error("Accessibility permission required: grant System Events access in System Preferences > Privacy & Accessibility");
-      }
-      throw new Error(`type_in_element failed: ${error.message || error}`);
+    } catch (error) {
+      rethrowElementActionError(error, "type_in_element", elementId);
     }
   }
 
@@ -1368,6 +1471,11 @@ export class MacOSPlatform implements Platform {
 
     const jxaScript = `
       var se = Application('System Events');
+      function childElements(elem) {
+        try { return elem.uiElements(); } catch(e1) {
+          try { return elem.elements(); } catch(e2) { return []; }
+        }
+      }
       var elemPath = ${elementIdLiteral};
       var appName = ${appLiteral};
       var valueToSet = ${valueLiteral};
@@ -1393,7 +1501,7 @@ export class MacOSPlatform implements Platform {
             var idx = parseInt(parts[i]);
             if (isNaN(idx)) return null;
             try {
-              var kids = current.elements();
+              var kids = childElements(current);
               if (idx >= kids.length) return null;
               current = kids[idx];
             } catch(e) { return null; }
@@ -1420,7 +1528,7 @@ export class MacOSPlatform implements Platform {
             var idx = parseInt(parts[i]);
             if (isNaN(idx)) return null;
             try {
-              var kids = current.elements();
+              var kids = childElements(current);
               if (idx >= kids.length) return null;
               current = kids[idx];
             } catch(e) { return null; }
@@ -1505,7 +1613,7 @@ export class MacOSPlatform implements Platform {
             bestScore = score;
           }
           try {
-            var kids = elem.elements();
+            var kids = childElements(elem);
             for (var i = 0; i < kids.length; i++) visit(kids[i], depth + 1);
           } catch(e) {}
         }
@@ -1555,19 +1663,16 @@ export class MacOSPlatform implements Platform {
 
       const result = JSON.parse(out);
       if (!result.success) {
-        throw new Error(result.error || `set_value failed for element ${elementId}`);
+        throw result.error
+          ? new Error(result.error)
+          : new ElementNotFoundError(elementId);
       }
       const currentCached = this.elementCache.get(elementId);
       if (currentCached) {
         this.elementCache.set(elementId, { ...currentCached, value, cachedAt: Date.now() });
       }
-    } catch (error: any) {
-      if (error.message && error.message.includes("set_value failed")) throw error;
-      if (String(error.message || error).includes("not allowed") ||
-          String(error.message || error).includes("permission")) {
-        throw new Error("Accessibility permission required: grant System Events access in System Preferences > Privacy & Accessibility");
-      }
-      throw new Error(`set_value failed: ${error.message || error}`);
+    } catch (error) {
+      rethrowElementActionError(error, "set_value", elementId);
     }
   }
 }

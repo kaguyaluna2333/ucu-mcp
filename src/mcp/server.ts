@@ -1,6 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createStdioTransport } from "./transport.js";
-import { registerTools } from "./tools.js";
+import { registerTools, startUserActivityMonitor } from "./tools.js";
 
 const UCU_MCP_INSTRUCTIONS = `
 UCU-MCP is a cross-client computer-use server for Claude Code CLI, Claude Code Desktop, OpenCode, and other MCP clients.
@@ -14,15 +17,29 @@ Safety model: actions are blocked while macOS is locked, dangerous shortcuts and
 For Claude Code CLI/Desktop and OpenCode configs, run the ucu-mcp executable over stdio. If tools fail on macOS, run doctor first to check Accessibility and Screen Recording permissions. Windows and Linux adapters are explicit stubs until their native backends are implemented.
 `.trim();
 
+function getPackageVersion(): string {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (let i = 0; i < 6; i++) {
+    const path = join(dir, "package.json");
+    if (existsSync(path)) {
+      const parsed = JSON.parse(readFileSync(path, "utf-8")) as { version?: string };
+      return parsed.version ?? "0.0.0";
+    }
+    dir = dirname(dir);
+  }
+  return "0.0.0";
+}
+
 export async function startServer(): Promise<void> {
   const server = new McpServer({
     name: "ucu-mcp",
-    version: "0.1.0",
+    version: getPackageVersion(),
   }, {
     instructions: UCU_MCP_INSTRUCTIONS,
   });
 
   registerTools(server);
+  startUserActivityMonitor();
 
   const transport = createStdioTransport();
   await server.connect(transport);

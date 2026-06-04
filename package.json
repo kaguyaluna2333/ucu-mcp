@@ -25,6 +25,7 @@
     "test:watch": "vitest",
     "test:integration": "vitest run tests/integration/",
     "test:macos-gui": "UCU_MACOS_GUI_SMOKE=1 vitest run tests/integration/macos-gui-smoke.test.ts",
+    "test:client-cli": "UCU_CLIENT_CLI_SMOKE=1 vitest run tests/integration/client-cli-smoke.test.ts",
     "build:native": "cd native/cgevent && swiftc -O -o cgevent-helper main.swift -framework CoreGraphics -framework Foundation && cd ../ocr && swiftc -O -o ocr-helper main.swift -framework Vision -framework AppKit"
   },
   "keywords": [

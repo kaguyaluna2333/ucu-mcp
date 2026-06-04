@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MacOSPlatform } from "../../src/platform/macos.js";
+import type { FindElementResult } from "../../src/platform/base.js";
 
 const runSmoke = process.platform === "darwin" && process.env.UCU_MACOS_GUI_SMOKE === "1";
 const describeGuiSmoke = runSmoke ? describe : describe.skip;
@@ -12,22 +13,48 @@ function osascript(script: string, timeout = 10000): string {
   }).trim();
 }
 
-/** Try to launch TextEdit with an empty document; return true on success. */
+function sleep(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Try to launch TextEdit and reuse/clear an existing document if possible. */
 function launchTextEdit(): boolean {
   try {
     execFileSync("/usr/bin/open", ["-a", "TextEdit"], { timeout: 10000 });
     osascript(
       `
       tell application "TextEdit"
-        make new document with properties {text:""}
+        activate
+        if (count of documents) = 0 then
+          make new document with properties {text:""}
+        else
+          set text of document 1 to ""
+        end if
       end tell
     `,
       30000,
     );
+    sleep(500);
     return true;
   } catch {
     return false;
   }
+}
+
+async function waitForTextEditTextArea(platform: MacOSPlatform, timeoutMs = 10000): Promise<FindElementResult[]> {
+  const deadline = Date.now() + timeoutMs;
+  let lastResults: FindElementResult[] = [];
+  while (Date.now() < deadline) {
+    lastResults = await platform.findElement({
+      app: "TextEdit",
+      role: "AXTextArea",
+      depth: 8,
+      maxResults: 1,
+    });
+    if (lastResults.length > 0) return lastResults;
+    sleep(250);
+  }
+  return lastResults;
 }
 
 function closeTextEditDocs(): void {
@@ -104,12 +131,9 @@ describeGuiSmoke("macOS GUI smoke", () => {
 
   it("findElement locates an AXTextArea in TextEdit", async (ctx) => {
     if (!textEditAvailable) ctx.skip();
+    if (!launchTextEdit()) ctx.skip();
 
-    const matches = await platform.findElement({
-      app: "TextEdit",
-      role: "AXTextArea",
-      depth: 8,
-    });
+    const matches = await waitForTextEditTextArea(platform);
     expect(matches.length).toBeGreaterThan(0);
 
     const el = matches[0];
@@ -144,15 +168,12 @@ describeGuiSmoke("macOS GUI smoke", () => {
 
   it("finds a TextEdit text area and sets its value through AX", async (ctx) => {
     if (!textEditAvailable) ctx.skip();
+    if (!launchTextEdit()) ctx.skip();
 
     const target = await platform.focusApp("TextEdit");
     expect(target.appName).toContain("TextEdit");
 
-    const matches = await platform.findElement({
-      app: "TextEdit",
-      role: "AXTextArea",
-      depth: 8,
-    });
+    const matches = await waitForTextEditTextArea(platform);
     expect(matches.length).toBeGreaterThan(0);
 
     await platform.setElementValue(matches[0].id, "ucu-mcp macOS GUI smoke", "TextEdit");

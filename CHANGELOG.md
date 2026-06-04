@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - 2025-06-04
+## [0.2.0] - 2026-06-05
 
 ### Changed
 
@@ -18,13 +18,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `typeInElement` now properly escapes `$` in text to prevent JXA template-literal interpolation errors
 - AX element cache now refetches stale references instead of throwing
+- MCP server version now resolves from `package.json` instead of advertising stale `0.1.0`
+- `screenshot.maxWidth`, `screenshot.windowId`, and action `captureAfter` encode options now reach the execution path
+- `captureAfter` now returns a separate MCP image content item instead of embedding screenshot bytes in JSON text
+- Window-relative coordinate tools now reject stale `windowId` values instead of falling back to raw screen coordinates
+- Real input actions no longer use the shared retry wrapper after a partial failure
+- macOS AX traversal now uses `uiElements()` with `elements()` fallback, fixing TextEdit `AXTextArea` discovery
+- User activity monitoring now starts with the MCP server and initializes the cursor baseline before polling
+- Added client-friendly aliases and defaults: `press_key.modifiers`, `scroll.deltaX=0`, `wait_for_element.timeoutMs/intervalMs`, and `move.captureAfter`
+- README tool tables and OCR/captureAfter response examples now match the live MCP schema
+- macOS platform failures now use structured `UcuError` subclasses for screenshots, window lookup, AX permissions, stale elements, cursor queries, and input synthesis
+- MCP tool failures now return `isError: true` with JSON `error.name`, `error.code`, `error.retryable`, `error.message`, and `error.recovery` instead of forcing clients to parse plain text
+- `wait_for_element` no longer masks Accessibility/platform failures as ordinary timeouts; missing elements still time out, but real lookup failures surface through the structured MCP error response
+- macOS `listWindows` now uses a short defensive-copy cache for repeated window lookups, reducing back-to-back window resolution calls from seconds to near-zero while `focusApp` still invalidates before activating a target app
+- Added optional real client CLI smoke coverage for Claude Code CLI, Codex CLI, and OpenCode MCP visibility
+- README now includes verified `claude mcp add`, `codex mcp add`, and OpenCode `opencode.json` setup paths
 
 ### Tests
 
-- Unit test count grew from 83 → 142
-- GUI smoke tests 8/8 passing (`UCU_MACOS_GUI_SMOKE=1`)
+- Unit test count grew from 83 → 161
+- Optional client CLI smoke: 3/3 passing with `npm run test:client-cli`
+- GUI smoke tests 6/6 passing (`UCU_MACOS_GUI_SMOKE=1`)
 
-## [0.1.0] - 2025-06-02
+## [0.1.0] - 2026-06-02
 
 ### Added
 

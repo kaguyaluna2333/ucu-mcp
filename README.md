@@ -78,10 +78,10 @@ UCU-MCP provides 22 tools across five categories:
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `screenshot` | Capture screen, window, or region as base64 PNG/JPEG | `display?`, `windowId?`, `region?`, `maxWidth?`, `format?` |
+| `screenshot` | Capture screen, window, or region as PNG/JPEG image content | `display?`, `windowId?`, `region?`, `maxWidth?`, `format?` |
 | `list_windows` | List all on-screen windows with IDs, titles, bounds | `includeMinimized?` |
 | `list_apps` | List visible macOS apps with pid, frontmost state, and window count | — |
-| `focus_app` | Select an app/window target context without raising it | `app` |
+| `focus_app` | Select an app/window target context for later AX tools | `app` |
 | `get_window_state` | Get accessibility tree of a window, or the prior focus_app target when windowId is omitted | `windowId?`, `depth?`, `includeBounds?` |
 | `get_screen_size` | Get screen dimensions | `display?` |
 | `ocr` | Perform OCR on screen or region; returns text with bounding boxes and confidence | `display?`, `region?` |
@@ -92,9 +92,9 @@ UCU-MCP provides 22 tools across five categories:
 |------|-------------|----------------|
 | `click` | Click at screen coordinates (non-invasive) | `x`, `y`, `windowId?`, `button?` |
 | `double_click` | Double-click at screen coordinates | `x`, `y`, `windowId?`, `button?` |
-| `scroll` | Scroll at a position (vertical/horizontal) | `x`, `y`, `deltaX?`, `deltaY`, `captureAfter?` |
-| `drag` | Drag from one position to another | `startX`, `startY`, `endX`, `endY`, `duration?`, `button?`, `captureAfter?` |
-| `move` | Move the physical cursor to a position (invasive) | `x`, `y` |
+| `scroll` | Scroll at a position (vertical/horizontal) | `x`, `y`, `deltaX?`, `deltaY`, `windowId?`, `captureAfter?` |
+| `drag` | Drag from one position to another | `startX`, `startY`, `endX`, `endY`, `windowId?`, `duration?`, `button?`, `captureAfter?` |
+| `move` | Move the physical cursor to a position (invasive) | `x`, `y`, `windowId?`, `captureAfter?` |
 | `get_cursor_position` | Get current cursor position | — |
 
 ### Keyboard
@@ -102,7 +102,7 @@ UCU-MCP provides 22 tools across five categories:
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `type_text` | Type text into the currently focused element via OS key events (not clipboard) | `text`, `delay?`, `captureAfter?` |
-| `press_key` | Press key or keyboard shortcut in the focused window | `key`, `modifiers?`, `captureAfter?` |
+| `press_key` | Press key or keyboard shortcut in the focused window | `key?`, `modifiers?`, `keys?`, `captureAfter?` |
 
 ### AX Element Interaction
 
@@ -118,10 +118,10 @@ UCU-MCP provides 22 tools across five categories:
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
 | `doctor` | Check platform readiness, permissions, lock-screen state, and client integration hints | — |
-| `wait` | Wait for UI state to settle after launches, animations, or navigation | `ms?` |
-| `wait_for_element` | Poll the AX tree until a matching element appears | `text?`, `role?`, `app?`, `timeoutMs?`, `intervalMs?` |
+| `wait` | Wait for UI state to settle after launches, animations, or navigation | `ms` |
+| `wait_for_element` | Poll the AX tree until a matching element appears | `text?`, `role?`, `app?`, `timeout?`, `timeoutMs?`, `interval?`, `intervalMs?` |
 
-Action tools accept `captureAfter`, `captureMaxWidth`, and `captureFormat` so an agent can receive a post-action screenshot in the same MCP response instead of spending another round trip on `screenshot`.
+Action tools accept `captureAfter`, `captureMaxWidth`, and `captureFormat` so an agent can receive a post-action screenshot as a second MCP image content item in the same response instead of spending another round trip on `screenshot`.
 
 For fast AX discovery on large windows, use `find_element` with `includeBounds=false` and a small `maxResults`. Keep bounds enabled when the result may be used for coordinate fallback.
 
@@ -153,11 +153,14 @@ The `ocr` tool captures a screenshot and runs optical character recognition, ret
 
 ```json
 {
-  "text": "Detected text here",
+  "fullText": "Detected text here",
   "elements": [
     {
       "text": "Hello",
-      "bounds": { "x": 120, "y": 210, "width": 80, "height": 24 },
+      "x": 120,
+      "y": 210,
+      "width": 80,
+      "height": 24,
       "confidence": 0.97
     }
   ]
@@ -245,10 +248,20 @@ UCU-MCP runs as a stdio MCP server. This is the common integration path for Clau
 
 ### Claude Code CLI
 
+Verified CLI setup:
+
+```bash
+claude mcp add --scope user ucu -- ucu-mcp
+claude mcp list
+```
+
+Equivalent config shape:
+
 ```json
 {
   "mcpServers": {
     "ucu": {
+      "type": "stdio",
       "command": "ucu-mcp"
     }
   }
@@ -263,23 +276,49 @@ Use the same local MCP server shape as Claude Desktop. Grant Accessibility and S
 {
   "mcpServers": {
     "ucu": {
+      "type": "stdio",
       "command": "ucu-mcp"
     }
   }
 }
 ```
 
+### Codex CLI
+
+Verified CLI setup:
+
+```bash
+codex mcp add ucu -- ucu-mcp
+codex mcp list
+```
+
+Equivalent `~/.codex/config.toml` shape:
+
+```toml
+[mcp_servers.ucu]
+command = "ucu-mcp"
+```
+
 ### OpenCode
+
+OpenCode reads MCP servers from `~/.config/opencode/opencode.json`.
 
 ```json
 {
   "mcp": {
-    "ucu": {
+    "ucu-mcp": {
       "type": "local",
+      "enabled": true,
       "command": ["ucu-mcp"]
     }
   }
 }
+```
+
+Verify with:
+
+```bash
+opencode mcp list
 ```
 
 ### Runtime Doctor
@@ -362,15 +401,32 @@ src/
 
 ## Error Handling
 
+Tool execution failures return standard MCP tool results with `isError: true`. The first content item is JSON text so clients can make policy decisions without string matching:
+
+```json
+{
+  "error": {
+    "name": "WindowNotFoundError",
+    "code": "WINDOW_NOT_FOUND",
+    "retryable": false,
+    "message": "Window win-1 not found. It may have been closed. Run list_windows to get fresh IDs.",
+    "recovery": "Run list_windows again, then retry with a fresh windowId or omit windowId for screen coordinates."
+  }
+}
+```
+
 | Error Code | Description | Retryable |
 |------------|-------------|-----------|
 | `PLATFORM_ERROR` | Platform API call failed | Yes |
 | `PERMISSION_DENIED` | Missing system permission | No |
 | `SAFETY_BLOCKED` | Blocked by safety rule | No |
 | `WINDOW_NOT_FOUND` | Window does not exist | No |
+| `ELEMENT_NOT_FOUND` | Accessibility element is stale or missing | No |
+| `UNSUPPORTED_PARAMETER` | Valid JSON requested an unsupported parameter combination | No |
 | `COORDINATE_OUT_OF_BOUNDS` | Coordinate outside screen | No |
 | `INPUT_FAILED` | Input synthesis failed | Yes |
 | `CAPTURE_FAILED` | Screenshot/OCR capture failed | Yes |
+| `UNKNOWN_ERROR` | Unexpected internal failure | No |
 
 ## Development
 

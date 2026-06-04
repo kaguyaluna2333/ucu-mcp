@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = process.cwd();
 const binPath = join(repoRoot, "bin", "ucu-mcp.ts");
+const packageJson = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf-8")) as { version: string };
 
 function runCli(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
@@ -43,6 +45,7 @@ async function waitForJsonRpcResponses(stdout: () => string, ids: number[], time
 
 async function runMcpSmoke(): Promise<{
   instructions?: string;
+  serverInfo?: { name?: string; version?: string };
   tools: string[];
   toolDefinitions: Array<{
     name: string;
@@ -97,6 +100,7 @@ async function runMcpSmoke(): Promise<{
     toolDefinitions,
     doctor: JSON.parse(doctorText),
     stderr,
+    serverInfo: initialize?.serverInfo,
   };
 }
 
@@ -169,6 +173,10 @@ describe("CLI and MCP compatibility", () => {
   it("exposes instructions and Mac completion tools over MCP stdio", async () => {
     const result = await runMcpSmoke();
     expect(result.instructions).toContain("Claude Code CLI/Desktop and OpenCode");
+    expect(result.serverInfo).toMatchObject({
+      name: "ucu-mcp",
+      version: packageJson.version,
+    });
     expect(result.tools).toEqual(expect.arrayContaining([
       "doctor",
       "wait",
@@ -201,12 +209,15 @@ describe("CLI and MCP compatibility", () => {
         default: "png",
         description: "Image format",
       },
+      windowId: {
+        type: "string",
+      },
     });
   });
 
   it("documents captureAfter options on action tools", async () => {
     const result = await runMcpSmoke();
-    for (const toolName of ["click", "scroll", "drag", "type_text", "press_key", "click_element", "set_value", "type_in_element"]) {
+    for (const toolName of ["click", "scroll", "drag", "move", "type_text", "press_key", "click_element", "set_value", "type_in_element"]) {
       const tool = result.toolDefinitions.find((definition) => definition.name === toolName);
       expect(tool?.inputSchema?.properties).toMatchObject({
         captureAfter: {
@@ -224,6 +235,31 @@ describe("CLI and MCP compatibility", () => {
         },
       });
     }
+  });
+
+  it("documents ergonomic aliases for common client parameter names", async () => {
+    const result = await runMcpSmoke();
+    const pressKey = result.toolDefinitions.find((tool) => tool.name === "press_key");
+    const scroll = result.toolDefinitions.find((tool) => tool.name === "scroll");
+    const waitForElement = result.toolDefinitions.find((tool) => tool.name === "wait_for_element");
+
+    expect(pressKey?.inputSchema?.properties).toMatchObject({
+      key: { type: "string" },
+      modifiers: {
+        type: "array",
+        items: { type: "string" },
+      },
+    });
+    expect(scroll?.inputSchema?.properties).toMatchObject({
+      deltaX: {
+        type: "number",
+        default: 0,
+      },
+    });
+    expect(waitForElement?.inputSchema?.properties).toMatchObject({
+      timeoutMs: { type: "number" },
+      intervalMs: { type: "number" },
+    });
   });
 
   it("documents find_element performance controls in the MCP schema", async () => {
@@ -252,7 +288,13 @@ describe("CLI and MCP compatibility", () => {
     );
 
     expect(result.result?.isError).toBe(true);
-    expect(result.result?.content?.[0]?.text).toContain("windowId-targeted keyboard typing is not implemented");
+    const error = JSON.parse(result.result?.content?.[0]?.text).error;
+    expect(error).toMatchObject({
+      code: "UNSUPPORTED_PARAMETER",
+      retryable: false,
+      message: "windowId-targeted keyboard typing is not implemented",
+    });
+    expect(error.recovery).toContain("unsupported parameter");
     expect(result.result?.content?.[0]?.text).not.toContain("[DRY RUN]");
   });
 
@@ -264,7 +306,13 @@ describe("CLI and MCP compatibility", () => {
     );
 
     expect(result.result?.isError).toBe(true);
-    expect(result.result?.content?.[0]?.text).toContain("windowId-targeted key events are not implemented");
+    const error = JSON.parse(result.result?.content?.[0]?.text).error;
+    expect(error).toMatchObject({
+      code: "UNSUPPORTED_PARAMETER",
+      retryable: false,
+      message: "windowId-targeted key events are not implemented",
+    });
+    expect(error.recovery).toContain("unsupported parameter");
     expect(result.result?.content?.[0]?.text).not.toContain("[DRY RUN]");
   });
 });

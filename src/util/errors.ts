@@ -89,6 +89,19 @@ export class WindowNotFoundError extends UcuError {
   }
 }
 
+/**
+ * Requested accessibility element ID no longer resolves.
+ */
+export class ElementNotFoundError extends UcuError {
+  constructor(elementId: string) {
+    super(
+      `Element ${elementId} not found. It may have been removed or invalidated. Run find_element to get a fresh ID.`,
+      "ELEMENT_NOT_FOUND",
+      false,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Input Errors
 // ---------------------------------------------------------------------------

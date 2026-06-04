@@ -9,6 +9,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { MacOSPlatform } from "../../src/platform/macos.js";
+import { ElementNotFoundError, PermissionError, PlatformError, WindowNotFoundError } from "../../src/util/errors.js";
 
 function lastJxaScript(): string {
   const call = execFileSyncMock.mock.calls.at(-1);
@@ -54,7 +55,99 @@ describe("MacOSPlatform", () => {
     const platform = new MacOSPlatform();
 
     await expect(platform.setElementValue("Notes/win0/1/2", "hello", "Notes"))
-      .rejects.toThrow("set_value failed");
+      .rejects.toBeInstanceOf(PlatformError);
+  });
+
+  it("reports stale AX element IDs as ElementNotFoundError", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      success: false,
+      error: "Element not found: Notes/win0/1/2",
+    }));
+    const platform = new MacOSPlatform();
+
+    await expect(platform.setElementValue("Notes/win0/1/2", "hello", "Notes"))
+      .rejects.toBeInstanceOf(ElementNotFoundError);
+  });
+
+  it("reports AX permission failures as PermissionError", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("System Events is not allowed assistive access");
+    });
+    const platform = new MacOSPlatform();
+
+    await expect(platform.findElement({ app: "Notes" }))
+      .rejects.toBeInstanceOf(PermissionError);
+  });
+
+  it("reports missing windows as WindowNotFoundError", async () => {
+    execFileSyncMock
+      .mockReturnValueOnce(JSON.stringify([]))
+      .mockReturnValueOnce(JSON.stringify({ error: "Window not found", window: null }));
+    const platform = new MacOSPlatform();
+
+    await expect(platform.getWindowState("Notes/win9"))
+      .rejects.toBeInstanceOf(WindowNotFoundError);
+  });
+
+  it("activates an app before resolving focus target windows", async () => {
+    execFileSyncMock
+      .mockReturnValueOnce("")
+      .mockReturnValueOnce(JSON.stringify([
+        {
+          id: "TextEdit/win0",
+          title: "Untitled",
+          processName: "TextEdit",
+          pid: 42,
+          bounds: { x: 10, y: 20, width: 300, height: 200 },
+          isMinimized: false,
+          isOnScreen: true,
+        },
+      ]));
+    const platform = new MacOSPlatform();
+
+    const target = await platform.focusApp("TextEdit");
+
+    expect(target).toMatchObject({
+      appName: "TextEdit",
+      pid: 42,
+      windowId: "TextEdit/win0",
+      title: "Untitled",
+    });
+    expect(execFileSyncMock.mock.calls[0][1]).toEqual([
+      "-e",
+      'tell application "TextEdit" to activate',
+    ]);
+  });
+
+  it("caches listWindows briefly and returns defensive copies", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify([
+      {
+        id: "Notes/win0",
+        title: "Note",
+        processName: "Notes",
+        pid: 42,
+        bounds: { x: 10, y: 20, width: 300, height: 200 },
+        isMinimized: false,
+        isOnScreen: true,
+      },
+    ]));
+    const platform = new MacOSPlatform();
+
+    const first = await platform.listWindows();
+    first[0].bounds.x = 999;
+    const second = await platform.listWindows();
+
+    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+    expect(second[0].bounds.x).toBe(10);
+  });
+
+  it("reports cursor query failures as PlatformError", () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("NSEvent failed");
+    });
+    const platform = new MacOSPlatform();
+
+    expect(() => platform.getCursorPosition()).toThrow(PlatformError);
   });
 
   it("honors getWindowState depth up to 10 and includeBounds=false", async () => {
@@ -180,6 +273,7 @@ describe("MacOSPlatform", () => {
     const script = lastJxaScript();
     expect(script).toContain("var maxResults = 3;");
     expect(script).toContain("var includeBounds = false;");
+    expect(script).toContain('traverse(wins[w], "Notes/win" + w, 0);');
     expect(script).toContain("if (includeBounds) item.bounds = getBounds(elem);");
   });
 });
