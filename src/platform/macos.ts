@@ -45,6 +45,26 @@ function rethrowInputError(error: unknown, operation: string): never {
   throw new InputSynthesisError(`${operation} failed: ${errorMessage(error)}`);
 }
 
+function normalizeAppName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+function appNameMatches(processName: string, requestedApp: string): boolean {
+  const process = normalizeAppName(processName);
+  const requested = normalizeAppName(requestedApp);
+  if (!process || !requested) return false;
+  return process === requested ||
+    process.startsWith(`${requested} `) ||
+    process.startsWith(`${requested}-`) ||
+    process.includes(` ${requested} `);
+}
+
+function selectWindowForApp(windows: WindowInfo[], requestedApp: string): WindowInfo | undefined {
+  const requested = normalizeAppName(requestedApp);
+  return windows.find((window) => normalizeAppName(window.processName) === requested) ??
+    windows.find((window) => appNameMatches(window.processName, requestedApp));
+}
+
 interface CachedElementDescriptor {
   elementId: string;
   appName: string;
@@ -231,7 +251,6 @@ export class MacOSPlatform implements Platform {
   }
 
   async focusApp(app: string): Promise<AppTarget> {
-    const appLower = app.toLowerCase();
     const escapedApp = app.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     this.windowCache = undefined;
     try {
@@ -245,7 +264,7 @@ export class MacOSPlatform implements Platform {
     const deadline = Date.now() + 3000;
     do {
       const windows = await this.listWindows(true);
-      target = windows.find((w) => w.processName.toLowerCase().includes(appLower));
+      target = selectWindowForApp(windows, app);
       if (target) break;
       await new Promise((resolve) => setTimeout(resolve, 150));
     } while (Date.now() < deadline);

@@ -119,6 +119,40 @@ describe("MacOSPlatform", () => {
     ]);
   });
 
+  it("prefers exact app name matches over helper process substring matches", async () => {
+    execFileSyncMock
+      .mockReturnValueOnce("")
+      .mockReturnValueOnce(JSON.stringify([
+        {
+          id: "TextEdit Helper/win0",
+          title: "Helper",
+          processName: "TextEdit Helper",
+          pid: 41,
+          bounds: { x: 1, y: 2, width: 30, height: 20 },
+          isMinimized: false,
+          isOnScreen: true,
+        },
+        {
+          id: "TextEdit/win0",
+          title: "Untitled",
+          processName: "TextEdit",
+          pid: 42,
+          bounds: { x: 10, y: 20, width: 300, height: 200 },
+          isMinimized: false,
+          isOnScreen: true,
+        },
+      ]));
+    const platform = new MacOSPlatform();
+
+    const target = await platform.focusApp("TextEdit");
+
+    expect(target).toMatchObject({
+      appName: "TextEdit",
+      pid: 42,
+      windowId: "TextEdit/win0",
+    });
+  });
+
   it("caches listWindows briefly and returns defensive copies", async () => {
     execFileSyncMock.mockReturnValue(JSON.stringify([
       {
