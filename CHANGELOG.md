@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2025-06-04
+
+### Changed
+
+- Replaced JXA keyboard/mouse input with native Swift CGEvent helper (`native/cgevent/cgevent-helper`), eliminating SIGSEGV crashes on macOS Sequoia+
+- `listWindows` switched from `CGWindowListCopyWindowInfo` to System Events for reliable window enumeration
+- `getWindowState` adapted to use System Events window IDs instead of CGWindow IDs
+- Fixed OCR JXA script — `isValid` guard now correctly handles missing/broken references
+
+### Fixed
+
+- `typeInElement` now properly escapes `$` in text to prevent JXA template-literal interpolation errors
+- AX element cache now refetches stale references instead of throwing
+
+### Tests
+
+- Unit test count grew from 83 → 142
+- GUI smoke tests 8/8 passing (`UCU_MACOS_GUI_SMOKE=1`)
+
 ## [0.1.0] - 2025-06-02
 
 ### Added
