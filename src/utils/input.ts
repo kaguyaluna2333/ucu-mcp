@@ -25,13 +25,17 @@ const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // In dev: src/utils/input.ts → native/cgevent/cgevent-helper
 // In prod: dist/src/utils/input.js → dist/native/cgevent/cgevent-helper
-const nativeHelperPath = join(__dirname, "..", "..", "native", "cgevent", "cgevent-helper");
+const nativeHelperPath = join(__dirname, "..", "..", "..", "native", "cgevent", "cgevent-helper");
+// Fallback: try from project root (dev mode)
+const nativeHelperPathAlt = join(__dirname, "..", "..", "native", "cgevent", "cgevent-helper");
+import { existsSync } from "node:fs";
+const resolvedNativePath = existsSync(nativeHelperPath) ? nativeHelperPath : nativeHelperPathAlt;
 
 let _nativeAvailable: boolean | undefined;
 function isNativeAvailable(): boolean {
   if (_nativeAvailable !== undefined) return _nativeAvailable;
   try {
-    const stdout = execFileSync(nativeHelperPath, [], {
+    const stdout = execFileSync(resolvedNativePath, [], {
       input: '{"command":"ping"}',
       encoding: "utf8",
       timeout: 3000,
@@ -44,7 +48,7 @@ function isNativeAvailable(): boolean {
 }
 
 function runNativeChecked(payload: Record<string, unknown>): void {
-  const raw = execFileSync(nativeHelperPath, [], {
+  const raw = execFileSync(resolvedNativePath, [], {
     input: JSON.stringify(payload),
     encoding: "utf8",
     timeout: 10000,

@@ -1,0 +1,6 @@
+[mcp_servers.ucu-mcp]
+command = "npx"
+args = [
+    "-y",
+    "ucu-mcp",
+]

@@ -253,43 +253,41 @@ export class MacOSPlatform implements Platform {
 
   async listWindows(_includeMinimized?: boolean): Promise<WindowInfo[]> {
     try {
+      // Use System Events instead of CGWindowListCopyWindowInfo.
+      // The CoreGraphics API returns CFArrayRef/CFDictionaryRef which JXA
+      // cannot iterate reliably — CFArrayGetCount works but objectAtIndex
+      // does not. System Events JXA is slower (~3-6s) but correct.
       const jxaScript = `
-        ObjC.import('CoreGraphics');
-        ObjC.import('Foundation');
-        var winList = $.CGWindowListCopyWindowInfo(1, 0);
-        var count = winList.count;
+        var se = Application('System Events');
         var result = [];
-        for (var i = 0; i < count; i++) {
-          var w = $(winList).objectAtIndex(i);
-          var bounds = w.objectForKey('kCGWindowBounds');
-          var numberVal = w.objectForKey('kCGWindowNumber');
-          var nameVal = w.objectForKey('kCGWindowName');
-          var ownerVal = w.objectForKey('kCGWindowOwnerName');
-          var pidVal = w.objectForKey('kCGWindowOwnerPID');
-          var onScreenVal = w.objectForKey('kCGWindowIsOnscreen');
-          var layerVal = w.objectForKey('kCGWindowLayer');
-
-          // Skip windows at layer > 0 (menus, overlays, etc.)
-          if (layerVal && layerVal.intValue > 0) continue;
-
-          var bx = 0, by = 0, bw = 0, bh = 0;
-          try { bx = $(bounds).objectForKey('X').intValue; } catch(e) {}
-          try { by = $(bounds).objectForKey('Y').intValue; } catch(e) {}
-          try { bw = $(bounds).objectForKey('Width').intValue; } catch(e) {}
-          try { bh = $(bounds).objectForKey('Height').intValue; } catch(e) {}
-
-          // Skip zero-size windows
-          if (bw === 0 && bh === 0) continue;
-
-          result.push({
-            id: String(numberVal ? numberVal.intValue : 0),
-            title: nameVal ? String(nameVal) : '',
-            processName: ownerVal ? String(ownerVal) : '',
-            pid: pidVal ? pidVal.intValue : 0,
-            bounds: { x: bx, y: by, width: bw, height: bh },
-            isMinimized: false,
-            isOnScreen: onScreenVal ? onScreenVal.boolValue : true
-          });
+        var procs = se.processes();
+        for (var i = 0; i < procs.length; i++) {
+          var p = procs[i];
+          var pName = '';
+          var pPid = 0;
+          try { pName = p.name(); } catch(e) {}
+          try { pPid = p.unixId(); } catch(e) {}
+          try {
+            var wins = p.windows();
+            for (var j = 0; j < wins.length; j++) {
+              var w = wins[j];
+              var pos, sz;
+              try { pos = w.position(); } catch(e) { pos = [0, 0]; }
+              try { sz = w.size(); } catch(e) { sz = [0, 0]; }
+              if (sz[0] === 0 && sz[1] === 0) continue;
+              var title = '';
+              try { title = w.name() || ''; } catch(e) {}
+              result.push({
+                id: pName + '/win' + j,
+                title: title,
+                processName: pName,
+                pid: pPid,
+                bounds: { x: pos[0], y: pos[1], width: sz[0], height: sz[1] },
+                isMinimized: false,
+                isOnScreen: true
+              });
+            }
+          } catch(e) {}
         }
         JSON.stringify(result);
       `;
