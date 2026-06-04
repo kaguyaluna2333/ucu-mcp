@@ -352,23 +352,43 @@ export class MacOSPlatform implements Platform {
           return false;
         }
 
+        var foundWin = null;
+        var foundProc = null;
+
+        // Fast path: resolve "ProcessName/winN" format directly
+        var idParts = "${escapedWindowId}".split('/');
+        if (idParts.length >= 2 && idParts[0]) {
+          var procName = idParts[0];
+          var winIdx = 0;
+          var winMatch = idParts[1].match(/^win(\d+)$/);
+          if (winMatch) winIdx = parseInt(winMatch[1]);
+          try {
+            var proc = se.processes[procName]();
+            var ws = proc.windows();
+            if (winIdx < ws.length) {
+              foundWin = ws[winIdx];
+              foundProc = proc;
+            }
+          } catch(e) {}
+        }
+
         try {
-          var foundWin = null;
-          var foundProc = null;
-          var procs = se.processes();
-          for (var p = 0; p < procs.length; p++) {
-            var proc = procs[p];
-            try {
-              var wins = proc.windows();
-              for (var w = 0; w < wins.length; w++) {
-                if (windowMatches(wins[w], proc)) {
-                  foundWin = wins[w];
-                  foundProc = proc;
-                  break;
+          if (!foundWin) {
+            var procs = se.processes();
+            for (var p = 0; p < procs.length; p++) {
+              var proc = procs[p];
+              try {
+                var wins = proc.windows();
+                for (var w = 0; w < wins.length; w++) {
+                  if (windowMatches(wins[w], proc)) {
+                    foundWin = wins[w];
+                    foundProc = proc;
+                    break;
+                  }
                 }
-              }
-            } catch(e) {}
-            if (foundWin) break;
+              } catch(e) {}
+              if (foundWin) break;
+            }
           }
           if (!foundWin) { result.error = 'Window not found'; JSON.stringify(result); return; }
 
@@ -580,7 +600,7 @@ export class MacOSPlatform implements Platform {
           var url = $.NSURL.fileURLWithPath(path);
           var image = $.NSImage.alloc.initWithContentsOfURL(url);
 
-          if (!image || image.isValid() === false) {
+          if (!image || !image.isValid) {
             return JSON.stringify({error: "Failed to load screenshot image", elements: [], fullText: ""});
           }
 
