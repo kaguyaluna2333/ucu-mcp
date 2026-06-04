@@ -571,10 +571,8 @@ export class MacOSPlatform implements Platform {
   // ── OCR ──────────────────────────────────────────────────────────────────
 
   async ocr(display?: number, region?: ScreenRegion): Promise<OcrResult> {
-    // Take a screenshot first (reuse existing logic)
     const buf = await this.screenshot(display, region);
 
-    // Write screenshot to a temp file so Vision framework can read it
     const { writeFile, unlink } = await import("node:fs/promises");
     const { join } = await import("node:path");
     const { tmpdir } = await import("node:os");
@@ -585,97 +583,44 @@ export class MacOSPlatform implements Platform {
       const screenSize = this.getScreenSize(display);
       const scaleFactor = screenSize.scaleFactor ?? 2;
 
-      // Build JXA script that uses Vision framework for OCR
-      // JXA does not allow return statements at global scope, so we wrap in a function
-      const jxaScript = `
-        function run() {
-          ObjC.import('Vision');
-          ObjC.import('AppKit');
-          ObjC.import('Foundation');
+      // Try native Swift OCR helper first (avoids JXA ObjC bridge bugs on macOS Sequoia+)
+      const nativeResult = await this.ocrNative(tmpPath, scaleFactor, region);
+      if (nativeResult) return nativeResult;
 
-          var app = Application.currentApplication();
-          app.includeStandardAdditions = true;
+      // Fallback to JXA Vision framework
+      return await this.ocrJxa(tmpPath, screenSize, scaleFactor, region, buf);
+    } finally {
+      await unlink(tmpPath).catch(() => {});
+    }
+  }
 
-          var path = "${tmpPath.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$')}";
-          var url = $.NSURL.fileURLWithPath(path);
-          var image = $.NSImage.alloc.initWithContentsOfURL(url);
+  private async ocrNative(tmpPath: string, scaleFactor: number, region?: ScreenRegion): Promise<OcrResult | null> {
+    const { existsSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
 
-          if (!image || !image.isValid) {
-            return JSON.stringify({error: "Failed to load screenshot image", elements: [], fullText: ""});
-          }
+    // Resolve native binary path (same pattern as input.ts CGEvent helper)
+    const candidates = [
+      join(dirname(fileURLToPath(import.meta.url)), "..", "..", "native", "ocr", "ocr-helper"),
+      join(dirname(fileURLToPath(import.meta.url)), "..", "native", "ocr", "ocr-helper"),
+      join(process.cwd(), "native", "ocr", "ocr-helper"),
+    ];
 
-          var cgImage = image.CGImageForProposedRectContextHints(null, null, null);
-          if (!cgImage) {
-            return JSON.stringify({error: "Failed to get CGImage from screenshot", elements: [], fullText: ""});
-          }
+    let binaryPath: string | undefined;
+    for (const p of candidates) {
+      if (existsSync(p)) { binaryPath = p; break; }
+    }
+    if (!binaryPath) return null;
 
-          var request = $.VNRecognizeTextRequest.alloc.init;
-          request.recognitionLevel = $.VNRequestTextRecognitionLevelAccurate;
-          request.usesLanguageCorrection = true;
-
-          var handler = $.VNImageRequestHandler.alloc.initWithCGImageOptions(cgImage, null);
-          var performError = $();
-
-          var success = handler.performRequestsError([request], performError);
-          if (!success) {
-            return JSON.stringify({error: "OCR request failed", elements: [], fullText: ""});
-          }
-
-          var results = request.results;
-          var elements = [];
-          var fullTextParts = [];
-
-          var imgWidth = cgImage.width;
-          var imgHeight = cgImage.height;
-
-          for (var i = 0; i < results.count; i++) {
-            var obs = $(results).objectAtIndex(i);
-            var candidates = obs.topCandidates(1);
-            if (candidates && candidates.count > 0) {
-              var candidate = $(candidates).objectAtIndex(0);
-              var text = candidate.string.toString();
-              var confidence = candidate.confidence;
-              var bbox = obs.boundingBox;
-
-              // Vision boundingBox is normalized (0-1) with origin at bottom-left
-              // Convert to screen coordinates (origin at top-left)
-              var bx = bbox.origin.x * imgWidth;
-              var by = (1 - bbox.origin.y - bbox.size.height) * imgHeight;
-              var bw = bbox.size.width * imgWidth;
-              var bh = bbox.size.height * imgHeight;
-
-              elements.push({
-                text: text,
-                x: Math.round(bx),
-                y: Math.round(by),
-                width: Math.round(bw),
-                height: Math.round(bh),
-                confidence: confidence
-              });
-              fullTextParts.push(text);
-            }
-          }
-
-          return JSON.stringify({elements: elements, fullText: fullTextParts.join("\\n"), error: null});
-        }
-        run();
-      `;
-
-      const out = execFileSync("osascript", [
-        "-l", "JavaScript",
-        "-e", jxaScript,
-      ], { encoding: "utf-8", timeout: 30000 }).trim();
-
+    try {
+      const input = JSON.stringify({ imagePath: tmpPath });
+      const out = execFileSync(binaryPath, [], {
+        input,
+        encoding: "utf-8",
+        timeout: 30000,
+      }).trim();
       const parsed = JSON.parse(out);
-
-      if (parsed.error) {
-        throw new Error(parsed.error);
-      }
-
-      // Scale coordinates from image space to screen space
-      // The screenshot may be taken at a different resolution than screen coordinates
-      const imgWidth = buf.readUInt32BE(16); // PNG width at offset 16
-      const scaleFactorX = screenSize.width / (region ? region.width : (imgWidth / scaleFactor));
+      if (parsed.error) return null;
 
       const elements = parsed.elements.map((el: any) => ({
         text: el.text,
@@ -686,13 +631,80 @@ export class MacOSPlatform implements Platform {
         confidence: el.confidence,
       }));
 
-      return {
-        elements,
-        fullText: parsed.fullText,
-      };
-    } finally {
-      await unlink(tmpPath).catch(() => {});
+      return { elements, fullText: parsed.fullText };
+    } catch {
+      return null;
     }
+  }
+
+  private async ocrJxa(tmpPath: string, screenSize: ScreenSize, scaleFactor: number, region: ScreenRegion | undefined, buf: Buffer): Promise<OcrResult> {
+    const escapedPath = tmpPath.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, "\\`").replace(/$/g, "\\$");
+    const jxaScript = `
+      function run() {
+        ObjC.import('Vision');
+        ObjC.import('AppKit');
+        ObjC.import('Foundation');
+        var app = Application.currentApplication();
+        app.includeStandardAdditions = true;
+        var path = "${escapedPath}";
+        var url = $.NSURL.fileURLWithPath(path);
+        var image = $.NSImage.alloc.initWithContentsOfURL(url);
+        if (!image || !image.isValid) {
+          return JSON.stringify({error: "Failed to load screenshot image", elements: [], fullText: ""});
+        }
+        var cgImage = image.CGImageForProposedRectContextHints(null, null, null);
+        if (!cgImage) {
+          return JSON.stringify({error: "Failed to get CGImage from screenshot", elements: [], fullText: ""});
+        }
+        var request = $.VNRecognizeTextRequest.alloc.init;
+        request.recognitionLevel = $.VNRequestTextRecognitionLevelAccurate;
+        request.usesLanguageCorrection = true;
+        var handler = $.VNImageRequestHandler.alloc.initWithCGImageOptions(cgImage, null);
+        var performError = $();
+        var success = handler.performRequestsError([request], performError);
+        if (!success) {
+          return JSON.stringify({error: "OCR request failed", elements: [], fullText: ""});
+        }
+        var results = request.results;
+        var elements = [];
+        var fullTextParts = [];
+        var imgWidth = cgImage.width;
+        var imgHeight = cgImage.height;
+        for (var i = 0; i < results.count; i++) {
+          var obs = $(results).objectAtIndex(i);
+          var candidates = obs.topCandidates(1);
+          if (candidates && candidates.count > 0) {
+            var candidate = $(candidates).objectAtIndex(0);
+            var text = candidate.string.toString();
+            var confidence = candidate.confidence;
+            var bbox = obs.boundingBox;
+            var bx = bbox.origin.x * imgWidth;
+            var by = (1 - bbox.origin.y - bbox.size.height) * imgHeight;
+            var bw = bbox.size.width * imgWidth;
+            var bh = bbox.size.height * imgHeight;
+            elements.push({text:text,x:Math.round(bx),y:Math.round(by),width:Math.round(bw),height:Math.round(bh),confidence:confidence});
+            fullTextParts.push(text);
+          }
+        }
+        return JSON.stringify({elements:elements,fullText:fullTextParts.join("\\n"),error:null});
+      }
+      run();
+    `;
+    const out = execFileSync("osascript", ["-l", "JavaScript", "-e", jxaScript], { encoding: "utf-8", timeout: 30000 }).trim();
+    const parsed = JSON.parse(out);
+    if (parsed.error) throw new Error(parsed.error);
+
+    const imgWidth = buf.readUInt32BE(16);
+    const scaleFactorX = screenSize.width / (region ? region.width : (imgWidth / scaleFactor));
+    const elements = parsed.elements.map((el: any) => ({
+      text: el.text,
+      x: Math.round(el.x / scaleFactor) + (region ? region.x : 0),
+      y: Math.round(el.y / scaleFactor) + (region ? region.y : 0),
+      width: Math.round(el.width / scaleFactor),
+      height: Math.round(el.height / scaleFactor),
+      confidence: el.confidence,
+    }));
+    return { elements, fullText: parsed.fullText };
   }
 
   // ── Keyboard ────────────────────────────────────────────────────────────

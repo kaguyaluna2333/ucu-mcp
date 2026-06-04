@@ -1,7 +1,7 @@
 {
   "name": "ucu-mcp",
   "version": "0.2.0",
-  "description": "MCP server for Universal Computer Use \u2014 desktop automation for AI agents via Model Context Protocol",
+  "description": "MCP server for Universal Computer Use — desktop automation for AI agents via Model Context Protocol",
   "type": "module",
   "bin": {
     "ucu-mcp": "dist/bin/ucu-mcp.js"
@@ -25,7 +25,7 @@
     "test:watch": "vitest",
     "test:integration": "vitest run tests/integration/",
     "test:macos-gui": "UCU_MACOS_GUI_SMOKE=1 vitest run tests/integration/macos-gui-smoke.test.ts",
-    "build:native": "cd native/cgevent && swiftc -O -o cgevent-helper main.swift -framework CoreGraphics -framework Foundation"
+    "build:native": "cd native/cgevent && swiftc -O -o cgevent-helper main.swift -framework CoreGraphics -framework Foundation && cd ../ocr && swiftc -O -o ocr-helper main.swift -framework Vision -framework AppKit"
   },
   "keywords": [
     "mcp",
