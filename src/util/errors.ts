@@ -90,6 +90,19 @@ export class WindowNotFoundError extends UcuError {
 }
 
 /**
+ * Active target window is no longer available.
+ */
+export class TargetStaleError extends UcuError {
+  constructor(windowId: string) {
+    super(
+      `Active target window ${windowId} is no longer available. Run focus_app or list_windows to refresh.`,
+      "TARGET_STALE",
+      false,
+    );
+  }
+}
+
+/**
  * Requested accessibility element ID no longer resolves.
  */
 export class ElementNotFoundError extends UcuError {

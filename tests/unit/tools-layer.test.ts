@@ -37,6 +37,7 @@ vi.mock("../../src/safety/permissions.js", () => ({
 type TR = { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; isError?: boolean };
 type TH = (p: Record<string, unknown>) => Promise<TR>;
 const tools = new Map<string, { handler: TH }>();
+let testClockMs = 0;
 
 function errorOf(result: TR) {
   return JSON.parse(result.content[0].text!).error;
@@ -61,7 +62,14 @@ function defaults() {
   mockPlat.typeInElement.mockResolvedValue(undefined);
   mockPlat.setElementValue.mockResolvedValue(undefined);
   mockPlat.listApps.mockResolvedValue([{ name: "Notes", pid: 1, isFrontmost: true, windowCount: 1 }]);
-  mockPlat.focusApp.mockResolvedValue({ appName: "Notes", pid: 1 });
+  mockPlat.focusApp.mockResolvedValue({
+    targetId: "target-123",
+    appName: "Notes",
+    pid: 1,
+    windowId: "w1",
+    title: "Notes Window",
+    capturedAt: "2024-01-01T00:00:00.000Z",
+  });
   mockPlat.isScreenLocked.mockReturnValue(false);
   mockPlat.saveFocus.mockResolvedValue(undefined);
   mockPlat.restoreFocus.mockResolvedValue(undefined);
@@ -83,6 +91,8 @@ beforeAll(async () => {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  testClockMs += 10_000;
+  vi.setSystemTime(testClockMs);
   vi.advanceTimersByTime(200);
   vi.clearAllMocks();
   defaults();
@@ -138,8 +148,69 @@ describe("list_apps / focus_app", () => {
 
   it("delegates focus_app to platform", async () => {
     const r = await tools.get("focus_app")!.handler({ app: "Notes" });
-    expect(JSON.parse(r.content[0].text!)).toEqual({ appName: "Notes", pid: 1 });
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.appName).toBe("Notes");
+    expect(d.pid).toBe(1);
     expect(mockPlat.focusApp).toHaveBeenCalledWith("Notes");
+  });
+
+  it("returns target context with targetId, appName, pid, windowId, title, capturedAt", async () => {
+    const r = await tools.get("focus_app")!.handler({ app: "Notes" });
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.targetId).toBeTruthy();
+    expect(d.appName).toBe("Notes");
+    expect(d.pid).toBe(1);
+    expect(d.windowId).toBe("w1");
+    expect(d.title).toBe("Notes Window");
+    expect(d.capturedAt).toBe("2024-01-01T00:00:00.000Z");
+  });
+});
+
+describe("active target context", () => {
+  it("uses active target app when app is omitted in find_element", async () => {
+    await tools.get("focus_app")!.handler({ app: "Notes" });
+    await vi.advanceTimersByTimeAsync(101);
+    await tools.get("find_element")!.handler({ text: "Save" });
+    expect(mockPlat.findElement).toHaveBeenCalledWith(expect.objectContaining({ app: "Notes" }));
+  });
+
+  it("uses active target app when app is omitted in click_element", async () => {
+    await tools.get("focus_app")!.handler({ app: "Notes" });
+    await vi.advanceTimersByTimeAsync(101);
+    await tools.get("click_element")!.handler({ elementId: "btn1" });
+    expect(mockPlat.clickElement).toHaveBeenCalledWith("btn1", "Notes");
+  });
+
+  it("uses active target app when app is omitted in set_value", async () => {
+    await tools.get("focus_app")!.handler({ app: "Notes" });
+    await vi.advanceTimersByTimeAsync(101);
+    await tools.get("set_value")!.handler({ elementId: "field1", value: "hello" });
+    expect(mockPlat.setElementValue).toHaveBeenCalledWith("field1", "hello", "Notes");
+  });
+
+  it("uses active target app when app is omitted in type_in_element", async () => {
+    await tools.get("focus_app")!.handler({ app: "Notes" });
+    await vi.advanceTimersByTimeAsync(101);
+    await tools.get("type_in_element")!.handler({ elementId: "field1", text: "hello" });
+    expect(mockPlat.typeInElement).toHaveBeenCalledWith("field1", "hello", "Notes", undefined);
+  });
+
+  it("uses active target window when windowId is omitted in get_window_state", async () => {
+    await tools.get("focus_app")!.handler({ app: "Notes" });
+    await vi.advanceTimersByTimeAsync(101);
+    await tools.get("get_window_state")!.handler({});
+    expect(mockPlat.getWindowState).toHaveBeenCalledWith("w1", undefined, undefined);
+  });
+
+  it("returns TARGET_STALE when active target window no longer exists", async () => {
+    // First focus_app sets active target
+    await tools.get("focus_app")!.handler({ app: "Notes" });
+    await vi.advanceTimersByTimeAsync(101);
+    const { TargetStaleError } = await import("../../src/util/errors.js");
+    mockPlat.getWindowState.mockRejectedValueOnce(new TargetStaleError("w1"));
+    const r = await tools.get("get_window_state")!.handler({});
+    expect(r.isError).toBe(true);
+    expect(JSON.parse(r.content[0].text!).error.code).toBe("TARGET_STALE");
   });
 });
 

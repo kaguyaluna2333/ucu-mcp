@@ -12,15 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Action Receipt v1 — unified receipt structure for all action-class tools (click, double_click, scroll, drag, move, type_text, press_key, click_element, set_value, type_in_element)
 - Receipt fields: actionId (base36-timestamp unique ID), action, status (ok/partial/blocked), target (location context), result (business result), capture (screenshot metadata), warnings, next (suggested next step)
 - Partial receipt when action succeeds but post-action screenshot fails: status="partial", capture.error contains error details, warnings includes "Post-action screenshot capture failed"
+- Target Session v1 — `focus_app` now returns stable target metadata (`targetId`, `appName`, `pid`, `windowId`, `title`, `capturedAt`) for follow-up tool calls
+- `TARGET_STALE` structured errors for active target windows that disappear before `get_window_state`
 
 ### Changed
 
 - Action tool responses now wrap business results under `result` instead of returning them at the top level
 - captureAfter failures now surface through receipt.capture.error instead of a flat captureError object
+- `get_window_state` can use the prior `focus_app` target when `windowId` is omitted
+- AX tools (`find_element`, `wait_for_element`, `click_element`, `set_value`, `type_in_element`) can use the prior `focus_app` target when `app` is omitted
 
 ### Tests
 
 - Updated tools-layer tests to assert receipt.result, receipt.capture.status, receipt.status, and receipt.warnings
+- Added focused unit coverage for active target defaults and stale target errors
 
 ## [0.2.0] - 2026-06-05
 

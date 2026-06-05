@@ -9,7 +9,7 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { MacOSPlatform } from "../../src/platform/macos.js";
-import { ElementNotFoundError, PermissionError, PlatformError, WindowNotFoundError } from "../../src/util/errors.js";
+import { ElementNotFoundError, PermissionError, PlatformError, TargetStaleError, WindowNotFoundError } from "../../src/util/errors.js";
 
 function lastJxaScript(): string {
   const call = execFileSyncMock.mock.calls.at(-1);
@@ -89,7 +89,7 @@ describe("MacOSPlatform", () => {
       .rejects.toBeInstanceOf(WindowNotFoundError);
   });
 
-  it("activates an app before resolving focus target windows", async () => {
+  it("activates an app and returns enriched target context", async () => {
     execFileSyncMock
       .mockReturnValueOnce("")
       .mockReturnValueOnce(JSON.stringify([
@@ -107,12 +107,13 @@ describe("MacOSPlatform", () => {
 
     const target = await platform.focusApp("TextEdit");
 
-    expect(target).toMatchObject({
-      appName: "TextEdit",
-      pid: 42,
-      windowId: "TextEdit/win0",
-      title: "Untitled",
-    });
+    expect(target.targetId).toBeTruthy();
+    expect(target.appName).toBe("TextEdit");
+    expect(target.pid).toBe(42);
+    expect(target.windowId).toBe("TextEdit/win0");
+    expect(target.title).toBe("Untitled");
+    expect(target.capturedAt).toBeTruthy();
+    expect(new Date(target.capturedAt).getTime()).toBeGreaterThan(0);
     expect(execFileSyncMock.mock.calls[0][1]).toEqual([
       "-e",
       'tell application "TextEdit" to activate',
@@ -151,6 +152,45 @@ describe("MacOSPlatform", () => {
       pid: 42,
       windowId: "TextEdit/win0",
     });
+  });
+
+  it("throws TARGET_STALE when active target window no longer exists", async () => {
+    execFileSyncMock
+      .mockReturnValueOnce(JSON.stringify([])) // activate
+      .mockReturnValueOnce(JSON.stringify([
+        { id: "App/win0", title: "Win", processName: "App", pid: 1, bounds: { x: 0, y: 0, width: 100, height: 100 }, isMinimized: false, isOnScreen: true }
+      ])) // first listWindows
+      .mockReturnValueOnce(JSON.stringify([])); // second listWindows (stale)
+    const platform = new MacOSPlatform();
+    await platform.focusApp("App");
+    let error: unknown;
+    try {
+      await platform.getWindowState();
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(TargetStaleError);
+    expect(error).toMatchObject({ code: "TARGET_STALE" });
+  });
+
+  it("throws TARGET_STALE for explicit active target window IDs", async () => {
+    execFileSyncMock
+      .mockReturnValueOnce(JSON.stringify([]))
+      .mockReturnValueOnce(JSON.stringify([
+        { id: "App/win0", title: "Win", processName: "App", pid: 1, bounds: { x: 0, y: 0, width: 100, height: 100 }, isMinimized: false, isOnScreen: true },
+      ]))
+      .mockReturnValueOnce(JSON.stringify([]));
+    const platform = new MacOSPlatform();
+    await platform.focusApp("App");
+
+    let error: unknown;
+    try {
+      await platform.getWindowState("App/win0");
+    } catch (err) {
+      error = err;
+    }
+    expect(error).toBeInstanceOf(TargetStaleError);
+    expect(error).toMatchObject({ code: "TARGET_STALE" });
   });
 
   it("caches listWindows briefly and returns defensive copies", async () => {

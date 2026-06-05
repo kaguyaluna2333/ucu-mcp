@@ -7,7 +7,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { Platform, WindowInfo, CursorPosition, OcrResult, FindElementResult, WindowState } from "../platform/base.js";
+import type { Platform, WindowInfo, CursorPosition, OcrResult, FindElementResult, WindowState, AppTarget } from "../platform/base.js";
 import { MacOSPlatform } from "../platform/macos.js";
 import { SafetyGuard } from "../safety/guard.js";
 import { checkPermission } from "../safety/permissions.js";
@@ -25,6 +25,16 @@ function getPlatform(): Platform {
   return _platform;
 }
 const safety = new SafetyGuard();
+
+// Active target context — set by focus_app, used by AX element tools
+let activeTargetContext: AppTarget | undefined;
+
+/**
+ * Get the currently active target context (set by focus_app).
+ */
+export function getActiveTarget(): AppTarget | undefined {
+  return activeTargetContext;
+}
 
 // User activity monitor — pauses automation when user moves the cursor
 let lastCursorPos = { x: 0, y: 0 };
@@ -57,6 +67,8 @@ function recoveryHint(code: string): string {
   switch (code) {
     case "WINDOW_NOT_FOUND":
       return "Run list_windows again, then retry with a fresh windowId or omit windowId for screen coordinates.";
+    case "TARGET_STALE":
+      return "Run focus_app again for the target app, or run list_windows and retry with a fresh windowId.";
     case "ELEMENT_NOT_FOUND":
       return "Run find_element again, then retry with a fresh elementId.";
     case "PERMISSION_DENIED":
@@ -355,7 +367,8 @@ export function registerTools(server: McpServer): void {
   registerTool("focus_app", "Select an application/window as the active target context", {
     app: z.string().describe("Application name to focus"),
   }, async (params) => {
-    const target = await withSafety({ action: "focus_app", params: {}, requiresAccessibility: true, execute: () => getPlatform().focusApp!(params.app) });
+    const target = await withSafety<AppTarget>({ action: "focus_app", params: {}, requiresAccessibility: true, execute: () => getPlatform().focusApp!(params.app) });
+    activeTargetContext = target;
     return { content: [{ type: "text", text: JSON.stringify(target, null, 2) }] };
   });
   registry.register("focus_app");
@@ -363,7 +376,8 @@ export function registerTools(server: McpServer): void {
   registerTool("get_window_state", "Get detailed state of a window including accessibility tree", {
     windowId: z.string().optional().describe("Window ID"), depth: z.number().optional().describe("AX tree depth"), includeBounds: z.boolean().optional().describe("Include element bounds"),
   }, async (params) => {
-    const state = await withSafety<WindowState>({ action: "get_window_state", params: {}, requiresAccessibility: true, execute: () => getPlatform().getWindowState(params.windowId, params.depth, params.includeBounds) });
+    const effectiveWindowId = params.windowId || getActiveTarget()?.windowId;
+    const state = await withSafety<WindowState>({ action: "get_window_state", params: {}, requiresAccessibility: true, execute: () => getPlatform().getWindowState(effectiveWindowId, params.depth, params.includeBounds) });
     return { content: [{ type: "text", text: JSON.stringify(state, null, 2) }] };
   });
   registry.register("get_window_state");
@@ -492,7 +506,8 @@ export function registerTools(server: McpServer): void {
   }, async (params) => {
     const deadline = Date.now() + (params.timeout ?? params.timeoutMs ?? 5000);
     const interval = params.interval ?? params.intervalMs ?? 500;
-    const query = { text: params.text, role: params.role, app: params.app, maxResults: 1 };
+    const effectiveApp = params.app || getActiveTarget()?.appName;
+    const query = { text: params.text, role: params.role, app: effectiveApp, maxResults: 1 };
     const { granted } = await checkPermission("accessibility");
     if (!granted) throw new PermissionError("accessibility", process.platform);
     while (Date.now() < deadline) {
@@ -541,8 +556,9 @@ export function registerTools(server: McpServer): void {
     text: z.string().optional().describe("Text to search"), role: z.string().optional().describe("AX role"), app: z.string().optional().describe("Target app"),
     depth: z.number().optional().describe("AX tree depth"), includeBounds: z.boolean().default(true).describe("Include bounds"), maxResults: z.number().min(1).max(200).default(50).describe("Max results"),
   }, async (params) => {
+    const effectiveApp = params.app || getActiveTarget()?.appName;
     const results = await withSafety<FindElementResult[]>({ action: "find_element", params: {}, requiresAccessibility: true,
-      execute: () => getPlatform().findElement({ text: params.text, role: params.role, app: params.app, depth: params.depth, includeBounds: params.includeBounds, maxResults: params.maxResults }) });
+      execute: () => getPlatform().findElement({ text: params.text, role: params.role, app: effectiveApp, depth: params.depth, includeBounds: params.includeBounds, maxResults: params.maxResults }) });
     return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
   });
   registry.register("find_element");
@@ -550,16 +566,18 @@ export function registerTools(server: McpServer): void {
   registerTool("click_element", "Click an accessibility element by its ID", {
     elementId: z.string().describe("AX element identifier"), app: z.string().optional().describe("Target app"), ...captureAfterFields,
   }, async (params) => {
-    await withSafety<void>({ action: "click_element", params: {}, requiresAccessibility: true, execute: () => getPlatform().clickElement(params.elementId, params.app) });
-    return actionResponse("click_element", { clicked: true, elementId: params.elementId }, { elementId: params.elementId, app: params.app }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    const effectiveApp = params.app || getActiveTarget()?.appName;
+    await withSafety<void>({ action: "click_element", params: {}, requiresAccessibility: true, execute: () => getPlatform().clickElement(params.elementId, effectiveApp) });
+    return actionResponse("click_element", { clicked: true, elementId: params.elementId }, { elementId: params.elementId, app: effectiveApp }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("click_element");
 
   registerTool("set_value", "Set the value of an accessibility element", {
     elementId: z.string().describe("AX element identifier"), value: z.string().describe("Value to set"), app: z.string().optional().describe("Target app"), ...captureAfterFields,
   }, async (params) => {
-    await withSafety<void>({ action: "set_value", params: { value: params.value }, requiresAccessibility: true, execute: () => getPlatform().setElementValue!(params.elementId, params.value, params.app) });
-    return actionResponse("set_value", { setValue: true, elementId: params.elementId }, { elementId: params.elementId, app: params.app }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    const effectiveApp = params.app || getActiveTarget()?.appName;
+    await withSafety<void>({ action: "set_value", params: { value: params.value }, requiresAccessibility: true, execute: () => getPlatform().setElementValue!(params.elementId, params.value, effectiveApp) });
+    return actionResponse("set_value", { setValue: true, elementId: params.elementId }, { elementId: params.elementId, app: effectiveApp }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("set_value");
 
@@ -567,8 +585,9 @@ export function registerTools(server: McpServer): void {
     elementId: z.string().describe("AX element identifier"), text: z.string().describe("Text to type"),
     app: z.string().optional().describe("Target app"), clearFirst: z.boolean().optional().describe("Clear existing text before typing"), ...captureAfterFields,
   }, async (params) => {
-    await withSafety<void>({ action: "type_in_element", params: { text: params.text }, requiresAccessibility: true, execute: () => getPlatform().typeInElement(params.elementId, params.text, params.app, params.clearFirst) });
-    return actionResponse("type_in_element", { typed: true, elementId: params.elementId, charCount: params.text.length }, { elementId: params.elementId, app: params.app }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    const effectiveApp = params.app || getActiveTarget()?.appName;
+    await withSafety<void>({ action: "type_in_element", params: { text: params.text }, requiresAccessibility: true, execute: () => getPlatform().typeInElement(params.elementId, params.text, effectiveApp, params.clearFirst) });
+    return actionResponse("type_in_element", { typed: true, elementId: params.elementId, charCount: params.text.length }, { elementId: params.elementId, app: effectiveApp }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("type_in_element");
 

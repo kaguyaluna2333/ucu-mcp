@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import type { Platform, ScreenRegion, ScreenSize, CursorPosition, WindowInfo, WindowState, ElementInfo, OcrResult, FindElementOptions, FindElementResult, AppInfo, AppTarget, BrowserContext, ScreenshotOptions } from "./base.js";
 import { captureFullScreen, captureRegion } from "../utils/screenshot.js";
 import { click as inputClick, doubleClick as inputDoubleClick, move as inputMove, drag as inputDrag, scroll as inputScroll, typeText, pressShortcut } from "../utils/input.js";
-import { CaptureError, ElementNotFoundError, InputSynthesisError, PermissionError, PlatformError, UcuError, WindowNotFoundError } from "../util/errors.js";
+import { CaptureError, ElementNotFoundError, InputSynthesisError, PermissionError, PlatformError, TargetStaleError, UcuError, WindowNotFoundError } from "../util/errors.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -126,6 +126,20 @@ export class MacOSPlatform implements Platform {
   /** Check whether a cached element descriptor has expired. */
   private isCacheEntryExpired(descriptor: CachedElementDescriptor): boolean {
     return Date.now() - descriptor.cachedAt > this.elementCacheTtlMs;
+  }
+
+
+  // ── Target Validation ────────────────────────────────────────────────────
+
+  /** Validate that the active target window still exists. */
+  async validateActiveTarget(): Promise<void> {
+    if (!this.activeTarget?.windowId) return;
+    this.windowCache = undefined; // Bypass cache — stale detection must use fresh data
+    const windows = await this.listWindows(true);
+    const stillExists = windows.some(w => w.id === this.activeTarget!.windowId);
+    if (!stillExists) {
+      throw new TargetStaleError(this.activeTarget.windowId);
+    }
   }
 
   // ── Focus Management ────────────────────────────────────────────────────
@@ -273,10 +287,12 @@ export class MacOSPlatform implements Platform {
       throw new WindowNotFoundError(app);
     }
     this.activeTarget = {
+      targetId: randomUUID(),
       appName: target.processName,
       pid: target.pid,
       windowId: target.id,
       title: target.title,
+      capturedAt: new Date().toISOString(),
     };
     return this.activeTarget;
   }
@@ -402,6 +418,9 @@ export class MacOSPlatform implements Platform {
   }
 
   async getWindowState(windowId?: string, depth?: number, includeBounds: boolean = true): Promise<WindowState> {
+    if (!windowId || windowId === this.activeTarget?.windowId) {
+      await this.validateActiveTarget();
+    }
     const resolvedWindowId = windowId || this.activeTarget?.windowId;
     if (!resolvedWindowId) {
       throw new WindowNotFoundError("active target");

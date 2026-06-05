@@ -44,10 +44,12 @@ export interface AppInfo {
 }
 
 export interface AppTarget {
+  targetId: string;
   appName: string;
   pid: number;
   windowId?: string;
   title?: string;
+  capturedAt: string;
 }
 
 export interface BrowserContext {

@@ -81,7 +81,7 @@ UCU-MCP provides 22 tools across five categories:
 | `screenshot` | Capture screen, window, or region as PNG/JPEG image content | `display?`, `windowId?`, `region?`, `maxWidth?`, `format?` |
 | `list_windows` | List all on-screen windows with IDs, titles, bounds | `includeMinimized?` |
 | `list_apps` | List visible macOS apps with pid, frontmost state, and window count | — |
-| `focus_app` | Select an app/window target context for later AX tools | `app` |
+| `focus_app` | Select an app/window target context for later AX tools; returns `targetId`, `appName`, `pid`, `windowId`, `title`, and `capturedAt` | `app` |
 | `get_window_state` | Get accessibility tree of a window, or the prior focus_app target when windowId is omitted | `windowId?`, `depth?`, `includeBounds?` |
 | `get_screen_size` | Get screen dimensions | `display?` |
 | `ocr` | Perform OCR on screen or region; returns text with bounding boxes and confidence | `display?`, `region?` |
@@ -108,8 +108,8 @@ UCU-MCP provides 22 tools across five categories:
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `find_element` | Find UI element by text, role, or description using AX APIs | `text?`, `role?`, `app?`, `depth?`, `includeBounds?`, `maxResults?` |
-| `click_element` | Click an AX element by its id (from find_element); refetches equivalent elements after UI updates | `elementId`, `app?`, `captureAfter?` |
+| `find_element` | Find UI element by text, role, or description using AX APIs, using the current focus_app target when app is omitted | `text?`, `role?`, `app?`, `depth?`, `includeBounds?`, `maxResults?` |
+| `click_element` | Click an AX element by its id (from find_element), using the current focus_app target when app is omitted; refetches equivalent elements after UI updates | `elementId`, `app?`, `captureAfter?` |
 | `set_value` | Set an AX element's value directly without focusing it, using the current focus_app target when app is omitted | `elementId`, `value`, `app?`, `captureAfter?` |
 | `type_in_element` | Type text into a specific AX text field element; may focus the element and refetches equivalent elements after UI updates | `elementId`, `text`, `app?`, `clearFirst?`, `captureAfter?` |
 
@@ -124,6 +124,8 @@ UCU-MCP provides 22 tools across five categories:
 Action tools accept `captureAfter`, `captureMaxWidth`, and `captureFormat` so an agent can receive a post-action screenshot as a second MCP image content item in the same response instead of spending another round trip on `screenshot`. When `captureAfter` is requested and the action succeeds, the tool returns an `ActionReceipt` (see the Action Receipt section below) with `capture.status: "ok"`. If post-action capture fails, the receipt has `status: "partial"` and `capture.status: "error"` with the error details. If `captureAfter` is omitted, `capture.status` is `"skipped"`.
 
 For fast AX discovery on large windows, use `find_element` with `includeBounds=false` and a small `maxResults`. Keep bounds enabled when the result may be used for coordinate fallback.
+
+`focus_app` establishes a session target for follow-up observation and AX actions. After focusing an app, `get_window_state` may omit `windowId`, and AX tools may omit `app`. If the focused window closes or is replaced, UCU-MCP returns a structured `TARGET_STALE` error so the agent can refresh with `focus_app` or `list_windows` instead of silently acting on a different target.
 
 ## OCR Tool Usage
 
