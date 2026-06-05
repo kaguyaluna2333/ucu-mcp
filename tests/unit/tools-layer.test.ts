@@ -135,6 +135,20 @@ describe("doctor tool", () => {
     const r = await tools.get("doctor")!.handler({});
     expect(JSON.parse(r.content[0].text!).screenLocked).toBe(true);
   });
+
+  it("includes a metrics section with global stats and byTool map", async () => {
+    const r = await tools.get("doctor")!.handler({});
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.metrics).toBeDefined();
+    expect(d.metrics.global).toEqual({
+      count: expect.any(Number),
+      p50: expect.any(Number),
+      p95: expect.any(Number),
+      max: expect.any(Number),
+      mean: expect.any(Number),
+    });
+    expect(typeof d.metrics.byTool).toBe("object");
+  });
 });
 
 describe("wait tool", () => {

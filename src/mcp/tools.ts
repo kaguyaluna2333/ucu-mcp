@@ -13,6 +13,7 @@ import { SafetyGuard, classifyAction } from "../safety/guard.js";
 import { checkPermission } from "../safety/permissions.js";
 import { retry } from "../util/retry.js";
 import { createLogger } from "../util/logger.js";
+import { metrics } from "../util/metrics.js";
 import { SafetyError, PermissionError, UnsupportedParameterError, UcuError, WindowNotFoundError } from "../util/errors.js";
 
 const log = createLogger("tools");
@@ -278,11 +279,13 @@ async function withSafety<T>(sa: SafetyAction): Promise<T> {
   if (sa.dryRun) return `[DRY-RUN] ${await sa.dryRun()}` as T;
   const shouldManageFocus = sa.requiresAccessibility && !["screenshot", "list_windows", "list_apps", "get_window_state", "get_cursor_position", "get_screen_size", "ocr", "doctor", "wait", "wait_for_element", "find_element", "focus_app"].includes(sa.action);
   if (shouldManageFocus) await platform.saveFocus?.();
+  const start = Date.now();
   try {
     return retryableActions.has(sa.action)
       ? await retry(() => sa.execute() as Promise<T>)
       : await sa.execute() as T;
   } finally {
+    metrics.record(sa.action, Date.now() - start);
     if (shouldManageFocus) await platform.restoreFocus?.();
   }
 }
@@ -551,6 +554,10 @@ export function registerTools(server: McpServer): void {
         typedTextInjectionScan: true,
       },
       stdioCommand: "ucu-mcp",
+      metrics: {
+        global: metrics.stats(),
+        byTool: metrics.byTool(),
+      },
     };
     return { content: [{ type: "text", text: JSON.stringify(report, null, 2) }] };
   });
