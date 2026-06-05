@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Scenario-based MCP Instructions — tool-usage guidance organized by task pattern (form fill, menu bar click, screen read, app switch, verify action, wait for change, recover stale target, clipboard)
+- findElement multi-strategy: `value` filter (AX value, respects textMode), `index` selector (0-based Nth match), `near` sorter (ascending distance to point)
+- wait_for_element `until` parameter: `appear` (default), `disappear` (poll until gone), `value_change` (poll until first match value differs)
 - Action Receipt v1 — unified receipt structure for all action-class tools (click, double_click, scroll, drag, move, type_text, press_key, click_element, set_value, type_in_element)
 - Receipt fields: actionId (base36-timestamp unique ID), action, status (ok/partial/blocked), target (location context), result (business result), capture (screenshot metadata), warnings, next (suggested next step)
 - Partial receipt when action succeeds but post-action screenshot fails: status="partial", capture.error contains error details, warnings includes "Post-action screenshot capture failed"
@@ -17,76 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- MCP instructions rewritten from generic description to scenario-driven workflow recommendations
+- `wait_for_element` description updated to reflect `until` parameter semantics
+- `find_element` schema extended with `value`, `index`, `near` parameters
 - Action tool responses now wrap business results under `result` instead of returning them at the top level
 - captureAfter failures now surface through receipt.capture.error instead of a flat captureError object
 - `get_window_state` can use the prior `focus_app` target when `windowId` is omitted
 - AX tools (`find_element`, `wait_for_element`, `click_element`, `set_value`, `type_in_element`) can use the prior `focus_app` target when `app` is omitted
-
-### Tests
-
-- Updated tools-layer tests to assert receipt.result, receipt.capture.status, receipt.status, and receipt.warnings
-- Added focused unit coverage for active target defaults and stale target errors
-
-## [0.2.0] - 2026-06-05
-
-### Changed
-
-- Replaced JXA keyboard/mouse input with native Swift CGEvent helper (`native/cgevent/cgevent-helper`), eliminating SIGSEGV crashes on macOS Sequoia+
-- `listWindows` switched from `CGWindowListCopyWindowInfo` to System Events for reliable window enumeration
-- `getWindowState` adapted to use System Events window IDs instead of CGWindow IDs
-- Fixed OCR JXA script — `isValid` guard now correctly handles missing/broken references
-
-### Fixed
-
-- `typeInElement` now properly escapes `$` in text to prevent JXA template-literal interpolation errors
-- AX element cache now refetches stale references instead of throwing
-- MCP server version now resolves from `package.json` instead of advertising stale `0.1.0`
-- `screenshot.maxWidth`, `screenshot.windowId`, and action `captureAfter` encode options now reach the execution path
-- `captureAfter` now returns a separate MCP image content item instead of embedding screenshot bytes in JSON text
-- Window-relative coordinate tools now reject stale `windowId` values instead of falling back to raw screen coordinates
-- Real input actions no longer use the shared retry wrapper after a partial failure
-- macOS AX traversal now uses `uiElements()` with `elements()` fallback, fixing TextEdit `AXTextArea` discovery
-- User activity monitoring now starts with the MCP server and initializes the cursor baseline before polling
-- Added client-friendly aliases and defaults: `press_key.modifiers`, `scroll.deltaX=0`, `wait_for_element.timeoutMs/intervalMs`, and `move.captureAfter`
-- README tool tables and OCR/captureAfter response examples now match the live MCP schema
-- macOS platform failures now use structured `UcuError` subclasses for screenshots, window lookup, AX permissions, stale elements, cursor queries, and input synthesis
-- MCP tool failures now return `isError: true` with JSON `error.name`, `error.code`, `error.retryable`, `error.message`, and `error.recovery` instead of forcing clients to parse plain text
-- `wait_for_element` no longer masks Accessibility/platform failures as ordinary timeouts; missing elements still time out, but real lookup failures surface through the structured MCP error response
-- macOS `listWindows` now uses a short defensive-copy cache for repeated window lookups, reducing back-to-back window resolution calls from seconds to near-zero while `focusApp` still invalidates before activating a target app
-- Added optional real client CLI smoke coverage for Claude Code CLI, Codex CLI, and OpenCode MCP visibility
-- README now includes verified `claude mcp add`, `codex mcp add`, and OpenCode `opencode.json` setup paths
-
-### Tests
-
-- Unit test count grew from 83 → 161
-- Optional client CLI smoke: 3/3 passing with `npm run test:client-cli`
-- GUI smoke tests 6/6 passing (`UCU_MACOS_GUI_SMOKE=1`)
-
-## [0.1.0] - 2026-06-02
-
-### Added
-
-- Initial release of UCU-MCP (Universal Computer Use MCP Server)
-- **22 MCP tools** for desktop automation via Model Context Protocol:
-  - Screen capture: `screen_capture`, `screen_capture_active_window`
-  - Mouse control: `mouse_move`, `mouse_click`, `mouse_double_click`, `mouse_drag`, `mouse_scroll`
-  - Keyboard control: `keyboard_type`, `keyboard_hotkey`, `keyboard_key`
-  - Clipboard: `clipboard_read`, `clipboard_write`
-  - Window management: `window_list`, `window_activate`, `window_close`
-  - Application control: `app_launch`, `app_quit`
-  - System: `system_info`, `process_list`, `process_terminate`
-  - Safety: `doctor` command for permission and environment diagnostics
-- **Safety features**:
-  - URL blocklist to prevent navigation to sensitive sites
-  - Lock screen guard (macOS) — blocks automation when screen is locked
-  - Typed text injection scan — validates keyboard input before injection
-  - Focus steal suppression — prevents accidental focus changes during automation
-  - User interaction monitor — tracks user activity for safety coordination
-- **macOS platform support** with Accessibility API integration
-- TypeScript-first codebase with full type definitions
-- CLI entry point with `doctor` diagnostic command
-
-### Changed
 
 - Rewrote `src/mcp/tools.ts` with comprehensive 22-tool registry:
   - Unified `withSafety` wrapper for all automation actions

@@ -172,7 +172,7 @@ describe("CLI and MCP compatibility", () => {
 
   it("exposes instructions and Mac completion tools over MCP stdio", async () => {
     const result = await runMcpSmoke();
-    expect(result.instructions).toContain("Claude Code CLI/Desktop and OpenCode");
+    expect(result.instructions).toContain("Claude Code CLI/Desktop");
     expect(result.serverInfo).toMatchObject({
       name: "ucu-mcp",
       version: packageJson.version,

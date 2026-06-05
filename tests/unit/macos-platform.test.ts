@@ -352,6 +352,73 @@ describe("MacOSPlatform", () => {
     expect(script).toContain('traverse(wins[w], "Notes/win" + w, 0);');
     expect(script).toContain("if (includeBounds) item.bounds = getBounds(elem);");
   });
+
+  it("passes a value filter into the JXA script so the JXA matches() function filters by AX value", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      results: [{ id: "Notes/win0/1", role: "AXTextField", name: "Email", value: "a@b.com" }],
+      scannedCount: 3,
+      matchedCount: 1,
+    }));
+    const platform = new MacOSPlatform();
+
+    await platform.findElement({ role: "AXTextField", app: "Notes", value: "a@b.com" });
+
+    const script = lastJxaScript();
+    expect(script).toContain("valueFilter");
+    expect(script).toContain("a@b.com");
+  });
+
+  it("returns only the Nth result when index is provided", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      results: [
+        { id: "Notes/win0/1", role: "AXButton", name: "A" },
+        { id: "Notes/win0/2", role: "AXButton", name: "B" },
+        { id: "Notes/win0/3", role: "AXButton", name: "C" },
+      ],
+      scannedCount: 3,
+      matchedCount: 3,
+    }));
+    const platform = new MacOSPlatform();
+
+    const response = await platform.findElement({ role: "AXButton", app: "Notes", index: 1 });
+
+    expect(response.results).toEqual([
+      { id: "Notes/win0/2", role: "AXButton", name: "B" },
+    ]);
+    expect(response.metrics.matchedCount).toBe(3);
+  });
+
+  it("returns an empty result when index is out of range", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      results: [
+        { id: "Notes/win0/1", role: "AXButton", name: "A" },
+      ],
+      scannedCount: 1,
+      matchedCount: 1,
+    }));
+    const platform = new MacOSPlatform();
+
+    const response = await platform.findElement({ role: "AXButton", app: "Notes", index: 5 });
+
+    expect(response.results).toEqual([]);
+  });
+
+  it("sorts results by proximity to near point and returns closest first", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      results: [
+        { id: "Notes/win0/1", role: "AXButton", name: "Far", bounds: { x: 900, y: 900, width: 10, height: 10 } },
+        { id: "Notes/win0/2", role: "AXButton", name: "Near", bounds: { x: 10, y: 10, width: 10, height: 10 } },
+        { id: "Notes/win0/3", role: "AXButton", name: "Mid", bounds: { x: 100, y: 100, width: 10, height: 10 } },
+      ],
+      scannedCount: 3,
+      matchedCount: 3,
+    }));
+    const platform = new MacOSPlatform();
+
+    const response = await platform.findElement({ role: "AXButton", app: "Notes", near: { x: 0, y: 0 } });
+
+    expect(response.results.map(r => r.name)).toEqual(["Near", "Mid", "Far"]);
+  });
 });
 
 // ── AX Element Cache: Expiration, Size Limit, Signature Matching ────────

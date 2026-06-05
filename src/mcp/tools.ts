@@ -562,26 +562,43 @@ export function registerTools(server: McpServer): void {
   });
   registry.register("wait");
 
-  registerTool("wait_for_element", "Poll until an accessibility element matching the criteria appears", {
+  registerTool("wait_for_element", "Poll until an accessibility element matching the criteria reaches the desired state", {
     text: z.string().optional().describe("Element text"), role: z.string().optional().describe("Element role"),
     app: z.string().optional().describe("Target app"),
     timeout: z.number().optional().describe("Timeout ms (default 5000)"),
     timeoutMs: z.number().optional().describe("Alias for timeout"),
     interval: z.number().optional().describe("Poll interval ms (default 500)"),
     intervalMs: z.number().optional().describe("Alias for interval"),
+    until: z.enum(["appear", "disappear", "value_change"]).default("appear").describe("Wait condition: 'appear' (default) waits for a match, 'disappear' waits until no match, 'value_change' waits until first match's value changes"),
   }, async (params) => {
     const deadline = Date.now() + (params.timeout ?? params.timeoutMs ?? 5000);
     const interval = params.interval ?? params.intervalMs ?? 500;
+    const until = params.until ?? "appear";
     const effectiveApp = params.app || getActiveTarget()?.appName;
     const query = { text: params.text, role: params.role, app: effectiveApp, maxResults: 1 };
     const { granted } = await checkPermission("accessibility");
     if (!granted) throw new PermissionError("accessibility", process.platform);
+    let initialValue: string | undefined;
     while (Date.now() < deadline) {
       const response = await getPlatform().findElement(query);
-      if (response.results.length > 0) return { content: [{ type: "text", text: JSON.stringify({ found: true, element: response.results[0] }, null, 2) }] };
+      const matched = response.results[0];
+      if (until === "appear") {
+        if (matched) return { content: [{ type: "text", text: JSON.stringify({ found: true, element: matched }, null, 2) }] };
+      } else if (until === "disappear") {
+        if (!matched) return { content: [{ type: "text", text: JSON.stringify({ found: true, reason: "disappeared" }, null, 2) }] };
+      } else {
+        // value_change: capture the initial value of the first match, then wait for it to differ
+        if (matched) {
+          if (initialValue === undefined) {
+            initialValue = matched.value;
+          } else if (matched.value !== initialValue) {
+            return { content: [{ type: "text", text: JSON.stringify({ found: true, oldValue: initialValue, newValue: matched.value }, null, 2) }] };
+          }
+        }
+      }
       await new Promise(r => setTimeout(r, interval));
     }
-    return { content: [{ type: "text", text: JSON.stringify({ found: false, reason: "timeout" }) }] };
+    return { content: [{ type: "text", text: JSON.stringify({ found: false, reason: "timeout" }, null, 2) }] };
   });
   registry.register("wait_for_element");
 
@@ -623,10 +640,13 @@ export function registerTools(server: McpServer): void {
     depth: z.number().optional().describe("AX tree depth"), includeBounds: z.boolean().default(true).describe("Include bounds"), maxResults: z.number().min(1).max(200).default(50).describe("Max results"),
     textMode: z.enum(["contains", "exact", "regex"]).default("contains").describe("Text matching mode: contains (default), exact, or regex"),
     visibleOnly: z.boolean().default(false).describe("Only return elements with valid on-screen bounds"),
+    value: z.string().optional().describe("Filter by AX element value (respects textMode)"),
+    index: z.number().int().nonnegative().optional().describe("Return only the Nth match (0-based) after all other filtering and sorting"),
+    near: z.object({ x: z.number(), y: z.number() }).optional().describe("Sort results by ascending distance to this point and return closest first"),
   }, async (params) => {
     const effectiveApp = params.app || getActiveTarget()?.appName;
     const response = await withSafety<FindElementResponse>({ action: "find_element", params: {}, requiresAccessibility: true,
-      execute: () => getPlatform().findElement({ text: params.text, role: params.role, app: effectiveApp, depth: params.depth, includeBounds: params.includeBounds, maxResults: params.maxResults, textMode: params.textMode, visibleOnly: params.visibleOnly }) });
+      execute: () => getPlatform().findElement({ text: params.text, role: params.role, app: effectiveApp, depth: params.depth, includeBounds: params.includeBounds, maxResults: params.maxResults, textMode: params.textMode, visibleOnly: params.visibleOnly, value: params.value, index: params.index, near: params.near }) });
     return { content: [{ type: "text", text: JSON.stringify({ results: response.results, metrics: response.metrics }, null, 2) }] };
   });
   registry.register("find_element");

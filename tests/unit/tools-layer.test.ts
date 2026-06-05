@@ -255,6 +255,60 @@ describe("wait_for_element", () => {
       message: "AX unavailable",
     });
   });
+
+  it("supports until='disappear' and returns found=true with reason='disappeared' once element is gone", async () => {
+    mockPlat.findElement
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXButton", name: "Loading" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } })
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXButton", name: "Loading" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } })
+      .mockResolvedValueOnce({ results: [], metrics: { scannedCount: 0, matchedCount: 0, durationMs: 1, truncated: false } });
+    const p = tools.get("wait_for_element")!.handler({ text: "Loading", until: "disappear", timeout: 1000, interval: 100 });
+    await vi.advanceTimersByTimeAsync(500);
+    const r = await p;
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.found).toBe(true);
+    expect(d.reason).toBe("disappeared");
+  });
+
+  it("supports until='disappear' and returns found=false on timeout", async () => {
+    mockPlat.findElement.mockResolvedValue({ results: [{ id: "N/w0/1", role: "AXButton", name: "Loading" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } });
+    const p = tools.get("wait_for_element")!.handler({ text: "Loading", until: "disappear", timeout: 200, interval: 50 });
+    await vi.advanceTimersByTimeAsync(300);
+    const r = await p;
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.found).toBe(false);
+    expect(d.reason).toBe("timeout");
+  });
+
+  it("supports until='value_change' and returns oldValue/newValue once value differs", async () => {
+    mockPlat.findElement
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXStaticText", name: "Status", value: "idle" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } })
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXStaticText", name: "Status", value: "idle" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } })
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXStaticText", name: "Status", value: "ready" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } });
+    const p = tools.get("wait_for_element")!.handler({ text: "Status", until: "value_change", timeout: 1000, interval: 100 });
+    await vi.advanceTimersByTimeAsync(500);
+    const r = await p;
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.found).toBe(true);
+    expect(d.oldValue).toBe("idle");
+    expect(d.newValue).toBe("ready");
+  });
+
+  it("supports until='value_change' and returns found=false when value never changes", async () => {
+    mockPlat.findElement.mockResolvedValue({ results: [{ id: "N/w0/1", role: "AXStaticText", name: "Status", value: "idle" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } });
+    const p = tools.get("wait_for_element")!.handler({ text: "Status", until: "value_change", timeout: 200, interval: 50 });
+    await vi.advanceTimersByTimeAsync(300);
+    const r = await p;
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.found).toBe(false);
+    expect(d.reason).toBe("timeout");
+  });
+
+  it("defaults until to 'appear' when omitted (backward compatible)", async () => {
+    const r = await tools.get("wait_for_element")!.handler({ text: "Save", timeout: 1000, interval: 100 });
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.found).toBe(true);
+    expect(d.element.name).toBe("Save");
+  });
 });
 
 describe("click — window-relative coords", () => {

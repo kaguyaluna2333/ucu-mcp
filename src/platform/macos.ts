@@ -858,13 +858,14 @@ export class MacOSPlatform implements Platform {
 
   async findElement(options: FindElementOptions): Promise<FindElementResponse> {
     this.evictExpiredCacheEntries();
-    const { text, role, app, depth, includeBounds = true, textMode = "contains", visibleOnly = false } = options;
+    const { text, role, app, depth, includeBounds = true, textMode = "contains", visibleOnly = false, value } = options;
     const effectiveApp = app || this.activeTarget?.appName;
     const maxDepth = Math.min(depth || 5, 10);
     const maxResults = Math.min(Math.max(options.maxResults ?? 50, 1), 200);
     const escapedApp = (effectiveApp || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
     const escapedText = text ? text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$') : "";
     const escapedRole = role ? role.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$') : "";
+    const escapedValue = value ? value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$') : "";
 
     // Pre-compile regex on TS side to validate syntax before passing to JXA
     if (text && textMode === "regex") {
@@ -895,6 +896,7 @@ export class MacOSPlatform implements Platform {
 
       var textFilter = ${text ? `"${escapedText}"` : "null"};
       var roleFilter = ${role ? `"${escapedRole}"` : "null"};
+      var valueFilter = ${value ? `"${escapedValue}"` : "null"};
 
       function isVisible(elem) {
         try {
@@ -934,6 +936,20 @@ export class MacOSPlatform implements Platform {
         }
       }
 
+      function valueMatches(elemValue) {
+        if (valueFilter === null) return true;
+        if (textMode === "exact") {
+          return elemValue.toLowerCase() === valueFilter.toLowerCase();
+        } else if (textMode === "regex") {
+          try {
+            return new RegExp(valueFilter, "i").test(elemValue);
+          } catch(e) { return false; }
+        } else {
+          // contains (default)
+          return elemValue.toLowerCase().indexOf(valueFilter.toLowerCase()) !== -1;
+        }
+      }
+
       function matches(elem) {
         scannedCount++;
         var elemName = '';
@@ -951,6 +967,7 @@ export class MacOSPlatform implements Platform {
         if (roleFilter !== null) {
           if (elemRole !== roleFilter) return false;
         }
+        if (!valueMatches(elemValue)) return false;
         matchedCount++;
         return true;
       }
@@ -1061,8 +1078,25 @@ export class MacOSPlatform implements Platform {
         });
       }
       this.evictOverflowCacheEntries();
+      let finalResults = parsed.results;
+      if (options.near) {
+        const nx = options.near.x;
+        const ny = options.near.y;
+        finalResults = [...finalResults].sort((a, b) => {
+          const acx = (a.bounds?.x ?? 0) + (a.bounds?.width ?? 0) / 2;
+          const acy = (a.bounds?.y ?? 0) + (a.bounds?.height ?? 0) / 2;
+          const bcx = (b.bounds?.x ?? 0) + (b.bounds?.width ?? 0) / 2;
+          const bcy = (b.bounds?.y ?? 0) + (b.bounds?.height ?? 0) / 2;
+          return Math.hypot(acx - nx, acy - ny) - Math.hypot(bcx - nx, bcy - ny);
+        });
+      }
+      if (typeof options.index === "number") {
+        finalResults = options.index >= 0 && options.index < finalResults.length
+          ? [finalResults[options.index]]
+          : [];
+      }
       return {
-        results: parsed.results,
+        results: finalResults,
         metrics: {
           scannedCount: parsed.scannedCount,
           matchedCount: parsed.matchedCount,

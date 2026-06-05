@@ -96,6 +96,12 @@ export interface FindElementOptions {
   maxResults?: number;
   textMode?: "contains" | "exact" | "regex";
   visibleOnly?: boolean;
+  /** Match against the AX element's current value attribute (respects textMode). */
+  value?: string;
+  /** Return only the Nth match (0-based) after all other filtering and sorting. */
+  index?: number;
+  /** Sort results by ascending distance to this point and return closest first. */
+  near?: { x: number; y: number };
 }
 
 export interface FindElementResult {

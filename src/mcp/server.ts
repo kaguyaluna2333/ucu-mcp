@@ -6,15 +6,20 @@ import { createStdioTransport } from "./transport.js";
 import { registerTools, startUserActivityMonitor } from "./tools.js";
 
 const UCU_MCP_INSTRUCTIONS = `
-UCU-MCP is a cross-client computer-use server for Claude Code CLI, Claude Code Desktop, OpenCode, and other MCP clients.
+UCU-MCP is a cross-client computer-use server for Claude Code CLI/Desktop, OpenCode, and other MCP clients.
 
-Use screenshots and window state to observe before acting. On macOS, prefer list_apps/focus_app to establish the target app context, then use AX element tools when an element can be identified: find_element, then click_element, set_value, or type_in_element. Fall back to coordinates only when AX lookup is unavailable or ambiguous.
+Pick the right tool sequence for the task:
 
-Before repeated UI work, call get_screen_size and list_windows so coordinates and target windows are explicit. Use get_window_state for structured UI trees. Use ocr when visible text is not exposed through Accessibility. For tight observe-act loops, set captureAfter=true on action tools to receive a post-action screenshot in the same tool response.
+• Fill a form field → find_element (text/role) + type_in_element or set_value. Prefer AX over coordinates.
+• Click a menu bar item → get_screen_size + click with coordinates (menu bar is not in the AX tree).
+• Read what's on screen → screenshot; for text not in AX use ocr; for a structured tree use get_window_state.
+• Switch between apps → list_apps, then focus_app; subsequent tools use the active target context.
+• Verify an action succeeded → captureAfter=true on action tools, or call screenshot afterwards.
+• Wait for UI to change → wait_for_element (until: "appear" default; also "disappear" or "value_change").
+• Recover from TARGET_STALE → call focus_app again for the target app, then retry the action.
+• Read or write the clipboard → clipboard_read / clipboard_write.
 
-Safety model: actions are blocked while macOS is locked, dangerous shortcuts and sensitive windows are blocked, and suspicious injected text is rejected. For text entry into UI controls, prefer type_in_element because it can refetch equivalent AX elements if the UI tree changes.
-
-For Claude Code CLI/Desktop and OpenCode configs, run the ucu-mcp executable over stdio. If tools fail on macOS, run doctor first to check Accessibility and Screen Recording permissions. Windows and Linux adapters are explicit stubs until their native backends are implemented.
+General rules: on macOS call list_apps/focus_app first to establish target context, then prefer AX tools (find_element → click_element / type_in_element / set_value). Use coordinates only when AX lookup is unavailable. Actions are blocked while macOS is locked; dangerous shortcuts and sensitive windows are blocked; suspicious injected text is rejected. type_in_element can refetch equivalent AX elements when the UI tree changes. Run doctor to check Accessibility and Screen Recording permissions. Windows and Linux adapters are explicit stubs until their native backends are implemented.
 `.trim();
 
 function getPackageVersion(): string {
