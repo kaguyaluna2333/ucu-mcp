@@ -23,6 +23,8 @@ const mockPlat = vi.hoisted(() => ({
   isScreenLocked: vi.fn(),
   saveFocus: vi.fn(),
   restoreFocus: vi.fn(),
+  readClipboard: vi.fn(),
+  writeClipboard: vi.fn(),
 }));
 
 vi.mock("../../src/platform/macos.js", () => ({
@@ -73,6 +75,8 @@ function defaults() {
   mockPlat.isScreenLocked.mockReturnValue(false);
   mockPlat.saveFocus.mockResolvedValue(undefined);
   mockPlat.restoreFocus.mockResolvedValue(undefined);
+  mockPlat.readClipboard.mockResolvedValue("");
+  mockPlat.writeClipboard.mockResolvedValue(undefined);
 }
 
 beforeAll(async () => {
@@ -101,11 +105,12 @@ beforeEach(() => {
 afterAll(() => { vi.useRealTimers(); });
 
 describe("Tools registration", () => {
-  it("registers all 22 MCP tools", () => {
-    expect(tools.size).toBe(22);
+  it("registers all 24 MCP tools", () => {
+    expect(tools.size).toBe(24);
     const names = [...tools.keys()].sort();
     expect(names).toEqual([
-      "click","click_element","doctor","double_click","drag",
+      "click","click_element","clipboard_read","clipboard_write",
+      "doctor","double_click","drag",
       "find_element","focus_app","get_cursor_position","get_screen_size",
       "get_window_state","list_apps","list_windows","move","ocr",
       "press_key","screenshot","scroll","set_value","type_in_element",

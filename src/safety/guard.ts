@@ -131,6 +131,7 @@ export const OBSERVE_ACTIONS: ReadonlySet<string> = new Set([
   "wait",
   "wait_for_element",
   "doctor",
+  "clipboard_read",
 ]);
 
 /** Actions that synthesize user input — need full user-activity protection. */
@@ -145,6 +146,7 @@ export const INPUT_ACTIONS: ReadonlySet<string> = new Set([
   "click_element",
   "type_in_element",
   "set_value",
+  "clipboard_write",
 ]);
 
 export function classifyAction(action: string): "observe" | "input" | "other" {
@@ -249,7 +251,7 @@ export class SafetyGuard {
     }
 
     // 4. Text injection scan --------------------------------------------------
-    if (!this.allowUnsafeText && (action === "type" || action === "type_text" || action === "type_in_element" || action === "set_value")) {
+    if (!this.allowUnsafeText && (action === "type" || action === "type_text" || action === "type_in_element" || action === "set_value" || action === "clipboard_write")) {
       const text = typeof params.text === "string"
         ? params.text
         : typeof params.value === "string"

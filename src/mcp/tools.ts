@@ -1,7 +1,7 @@
 /**
  * Tool registry for UCU-MCP.
  *
- * Registers 22 MCP tools on the server and dispatches each call through
+ * Registers 24 MCP tools on the server and dispatches each call through
  * a shared safety/permission/retry pipeline (`withSafety`).
  */
 
@@ -658,6 +658,20 @@ export function registerTools(server: McpServer): void {
     return actionResponse("type_in_element", { typed: true, elementId: params.elementId, charCount: params.text.length }, { elementId: params.elementId, app: effectiveApp }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("type_in_element");
+
+  registerTool("clipboard_read", "Read the current contents of the system clipboard", {}, async () => {
+    const text = await withSafety<string>({ action: "clipboard_read", params: {}, execute: () => getPlatform().readClipboard() });
+    return { content: [{ type: "text", text: JSON.stringify({ text }, null, 2) }] };
+  });
+  registry.register("clipboard_read");
+
+  registerTool("clipboard_write", "Write text to the system clipboard (text injection patterns are blocked)", {
+    text: z.string().describe("Text to place on the clipboard"),
+  }, async (params) => {
+    await withSafety<void>({ action: "clipboard_write", params: { text: params.text }, execute: () => getPlatform().writeClipboard(params.text) });
+    return { content: [{ type: "text", text: JSON.stringify({ written: true }, null, 2) }] };
+  });
+  registry.register("clipboard_write");
 
   log.info("Registered tools", { count: registry.tools.length, tools: registry.tools.join(", ") });
 

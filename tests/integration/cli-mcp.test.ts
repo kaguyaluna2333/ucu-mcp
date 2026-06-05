@@ -185,7 +185,7 @@ describe("CLI and MCP compatibility", () => {
       "focus_app",
       "set_value",
     ]));
-    expect(result.tools.length).toBe(22);
+    expect(result.tools.length).toBe(24);
     expect(result.doctor.safety).toMatchObject({
       urlBlocklist: true,
       lockScreenGuard: process.platform === "darwin",

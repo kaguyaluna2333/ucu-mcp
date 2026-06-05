@@ -53,6 +53,8 @@ function createMockPlatform(): Platform {
     findElement: vi.fn().mockResolvedValue([]),
     clickElement: vi.fn().mockResolvedValue(undefined),
     typeInElement: vi.fn().mockResolvedValue(undefined),
+    readClipboard: vi.fn().mockResolvedValue(""),
+    writeClipboard: vi.fn().mockResolvedValue(undefined),
   };
 }
 

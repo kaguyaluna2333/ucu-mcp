@@ -173,4 +173,8 @@ export interface Platform {
   // Focus Management
   saveFocus?(): Promise<void>;
   restoreFocus?(): Promise<void>;
+
+  // Clipboard
+  readClipboard(): Promise<string>;
+  writeClipboard(text: string): Promise<void>;
 }
