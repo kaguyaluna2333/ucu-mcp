@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MacOSPlatform } from "../../src/platform/macos.js";
-import type { FindElementResult } from "../../src/platform/base.js";
+import type { FindElementResult, FindElementResponse } from "../../src/platform/base.js";
 
 const runSmoke = process.platform === "darwin" && process.env.UCU_MACOS_GUI_SMOKE === "1";
 const describeGuiSmoke = runSmoke ? describe : describe.skip;
@@ -45,12 +45,13 @@ async function waitForTextEditTextArea(platform: MacOSPlatform, timeoutMs = 1000
   const deadline = Date.now() + timeoutMs;
   let lastResults: FindElementResult[] = [];
   while (Date.now() < deadline) {
-    lastResults = await platform.findElement({
+    const response = await platform.findElement({
       app: "TextEdit",
       role: "AXTextArea",
       depth: 8,
       maxResults: 1,
     });
+    lastResults = response.results;
     if (lastResults.length > 0) return lastResults;
     sleep(250);
   }

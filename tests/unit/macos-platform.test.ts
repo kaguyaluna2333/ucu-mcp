@@ -319,16 +319,14 @@ describe("MacOSPlatform", () => {
   });
 
   it("honors findElement maxResults and includeBounds=false", async () => {
-    execFileSyncMock.mockReturnValue(JSON.stringify([
-      {
-        id: "Notes/win0/1",
-        role: "AXButton",
-        name: "Save",
-      },
-    ]));
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      results: [{ id: "Notes/win0/1", role: "AXButton", name: "Save" }],
+      scannedCount: 5,
+      matchedCount: 1,
+    }));
     const platform = new MacOSPlatform();
 
-    const results = await platform.findElement({
+    const response = await platform.findElement({
       text: "Save",
       role: "AXButton",
       app: "Notes",
@@ -337,13 +335,17 @@ describe("MacOSPlatform", () => {
       maxResults: 3,
     });
 
-    expect(results).toEqual([
+    expect(response.results).toEqual([
       {
         id: "Notes/win0/1",
         role: "AXButton",
         name: "Save",
       },
     ]);
+    expect(response.metrics.scannedCount).toBe(5);
+    expect(response.metrics.matchedCount).toBe(1);
+    expect(response.metrics.durationMs).toBeGreaterThanOrEqual(0);
+    expect(response.metrics.truncated).toBe(false);
     const script = lastJxaScript();
     expect(script).toContain("var maxResults = 3;");
     expect(script).toContain("var includeBounds = false;");
@@ -361,9 +363,11 @@ describe("MacOSPlatform elementCache", () => {
   });
 
   it("caches element descriptors with a timestamp from findElement", async () => {
-    execFileSyncMock.mockReturnValue(JSON.stringify([
-      { id: "Notes/win0/1", role: "AXButton", name: "Save" },
-    ]));
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      results: [{ id: "Notes/win0/1", role: "AXButton", name: "Save" }],
+      scannedCount: 1,
+      matchedCount: 1,
+    }));
     const platform = new MacOSPlatform();
     const before = Date.now();
 
@@ -388,9 +392,11 @@ describe("MacOSPlatform elementCache", () => {
   it("expires cache entries after TTL and passes null cached descriptor to JXA", async () => {
     vi.useFakeTimers();
     try {
-      execFileSyncMock.mockReturnValue(JSON.stringify([
-        { id: "Notes/win0/1", role: "AXButton", name: "Save" },
-      ]));
+      execFileSyncMock.mockReturnValue(JSON.stringify({
+        results: [{ id: "Notes/win0/1", role: "AXButton", name: "Save" }],
+        scannedCount: 1,
+        matchedCount: 1,
+      }));
       const platform = new MacOSPlatform();
 
       await platform.findElement({ text: "Save", role: "AXButton", app: "Notes" });
@@ -414,9 +420,11 @@ describe("MacOSPlatform elementCache", () => {
   it("expires cache entries on typeInElement after TTL", async () => {
     vi.useFakeTimers();
     try {
-      execFileSyncMock.mockReturnValue(JSON.stringify([
-        { id: "Notes/win0/1", role: "AXTextField", name: "Search" },
-      ]));
+      execFileSyncMock.mockReturnValue(JSON.stringify({
+        results: [{ id: "Notes/win0/1", role: "AXTextField", name: "Search" }],
+        scannedCount: 1,
+        matchedCount: 1,
+      }));
       const platform = new MacOSPlatform();
 
       await platform.findElement({ text: "Search", role: "AXTextField", app: "Notes" });
@@ -438,9 +446,11 @@ describe("MacOSPlatform elementCache", () => {
   it("expires cache entries on setElementValue after TTL", async () => {
     vi.useFakeTimers();
     try {
-      execFileSyncMock.mockReturnValue(JSON.stringify([
-        { id: "Notes/win0/1", role: "AXTextField", name: "Search" },
-      ]));
+      execFileSyncMock.mockReturnValue(JSON.stringify({
+        results: [{ id: "Notes/win0/1", role: "AXTextField", name: "Search" }],
+        scannedCount: 1,
+        matchedCount: 1,
+      }));
       const platform = new MacOSPlatform();
 
       await platform.findElement({ text: "Search", role: "AXTextField", app: "Notes" });
@@ -462,9 +472,11 @@ describe("MacOSPlatform elementCache", () => {
   it("keeps cache entries within TTL and passes cached descriptor to JXA", async () => {
     vi.useFakeTimers();
     try {
-      execFileSyncMock.mockReturnValue(JSON.stringify([
-        { id: "Notes/win0/1", role: "AXButton", name: "Save" },
-      ]));
+      execFileSyncMock.mockReturnValue(JSON.stringify({
+        results: [{ id: "Notes/win0/1", role: "AXButton", name: "Save" }],
+        scannedCount: 1,
+        matchedCount: 1,
+      }));
       const platform = new MacOSPlatform();
 
       await platform.findElement({ text: "Save", role: "AXButton", app: "Notes" });
@@ -500,9 +512,11 @@ describe("MacOSPlatform elementCache", () => {
 
     // findElement 101 times with different apps to create 101 distinct cache entries
     for (let i = 0; i < 101; i++) {
-      execFileSyncMock.mockReturnValue(JSON.stringify([
-        { id: `App${i}/win0/1`, role: "AXButton", name: `Btn${i}` },
-      ]));
+      execFileSyncMock.mockReturnValue(JSON.stringify({
+        results: [{ id: `App${i}/win0/1`, role: "AXButton", name: `Btn${i}` }],
+        scannedCount: 1,
+        matchedCount: 1,
+      }));
       await platform.findElement({ text: `Btn${i}`, app: `App${i}` });
     }
 
@@ -530,15 +544,17 @@ describe("MacOSPlatform elementCache", () => {
   });
 
   it("includes subrole and identifier in cached descriptors from findElement", async () => {
-    execFileSyncMock.mockReturnValue(JSON.stringify([
-      {
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      results: [{
         id: "Notes/win0/1",
         role: "AXButton",
         name: "Save",
         subrole: "AXButtonSubrole",
         identifier: "save-btn",
-      },
-    ]));
+      }],
+      scannedCount: 1,
+      matchedCount: 1,
+    }));
     const platform = new MacOSPlatform();
 
     await platform.findElement({ text: "Save", role: "AXButton", app: "Notes" });
@@ -556,15 +572,17 @@ describe("MacOSPlatform elementCache", () => {
   });
 
   it("scoreEquivalent JXA includes subrole and identifier matching", async () => {
-    execFileSyncMock.mockReturnValue(JSON.stringify([
-      {
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      results: [{
         id: "Notes/win0/1",
         role: "AXButton",
         name: "Save",
         subrole: "AXButtonSubrole",
         identifier: "save-btn",
-      },
-    ]));
+      }],
+      scannedCount: 1,
+      matchedCount: 1,
+    }));
     const platform = new MacOSPlatform();
 
     await platform.findElement({ text: "Save", role: "AXButton", app: "Notes" });
@@ -584,15 +602,17 @@ describe("MacOSPlatform elementCache", () => {
   });
 
   it("scoreEquivalent JXA includes subrole and identifier in typeInElement", async () => {
-    execFileSyncMock.mockReturnValue(JSON.stringify([
-      {
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      results: [{
         id: "Notes/win0/1",
         role: "AXTextField",
         name: "Search",
         subrole: "AXSearchField",
         identifier: "search-field",
-      },
-    ]));
+      }],
+      scannedCount: 1,
+      matchedCount: 1,
+    }));
     const platform = new MacOSPlatform();
 
     await platform.findElement({ text: "Search", role: "AXTextField", app: "Notes" });
@@ -608,15 +628,17 @@ describe("MacOSPlatform elementCache", () => {
   });
 
   it("scoreEquivalent JXA includes subrole and identifier in setElementValue", async () => {
-    execFileSyncMock.mockReturnValue(JSON.stringify([
-      {
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      results: [{
         id: "Notes/win0/1",
         role: "AXTextField",
         name: "Search",
         subrole: "AXSearchField",
         identifier: "search-field",
-      },
-    ]));
+      }],
+      scannedCount: 1,
+      matchedCount: 1,
+    }));
     const platform = new MacOSPlatform();
 
     await platform.findElement({ text: "Search", role: "AXTextField", app: "Notes" });

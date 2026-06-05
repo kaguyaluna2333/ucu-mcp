@@ -7,7 +7,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { Platform, WindowInfo, CursorPosition, OcrResult, FindElementResult, WindowState, AppTarget } from "../platform/base.js";
+import type { Platform, WindowInfo, CursorPosition, OcrResult, FindElementResult, FindElementResponse, WindowState, AppTarget } from "../platform/base.js";
 import { MacOSPlatform } from "../platform/macos.js";
 import { SafetyGuard } from "../safety/guard.js";
 import { checkPermission } from "../safety/permissions.js";
@@ -463,28 +463,91 @@ export function registerTools(server: McpServer): void {
   });
   registry.register("drag");
 
-  registerTool("doctor", "Check system permissions and diagnose common issues", {}, async () => {
+  registerTool("doctor", "Check system permissions, native helpers, and client readiness", {}, async () => {
     const { checkPermissions } = await import("../safety/permissions.js");
     const { MacOSPlatform: MacPlat } = await import("../platform/macos.js");
+    const { existsSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const { execFileSync } = await import("node:child_process");
     const permissions = await checkPermissions();
     const screenLocked = process.platform === "darwin" ? new MacPlat().isScreenLocked?.() ?? false : false;
+
+    let nativeHelpers: { cgevent: boolean; ocr: boolean } | undefined;
+    if (process.platform === "darwin") {
+      const moduleDir = dirname(fileURLToPath(import.meta.url));
+      const checkPaths = (subdirs: string[]) => {
+        const paths = [
+          join(process.cwd(), ...subdirs),
+          join(moduleDir, "..", ...subdirs),
+          join(moduleDir, "..", "..", ...subdirs),
+        ];
+        return paths.some(p => { try { return existsSync(p); } catch { return false; } });
+      };
+      nativeHelpers = {
+        cgevent: checkPaths(["native", "cgevent", "cgevent-helper"]),
+        ocr: checkPaths(["native", "ocr", "ocr-helper"]),
+      };
+    }
+
+    let readiness: "ready" | "degraded" | "blocked" = "ready";
+    const issues: string[] = [];
+    if (!permissions.granted) {
+      readiness = "blocked";
+      issues.push("Missing macOS permissions: " + permissions.missing.join(", "));
+    }
+    if (screenLocked) {
+      readiness = "blocked";
+      issues.push("Screen is locked");
+    }
+    if (process.platform === "darwin" && nativeHelpers) {
+      if (!nativeHelpers.cgevent) {
+        readiness = readiness === "ready" ? "degraded" : readiness;
+        issues.push("Native CGEvent helper not found (input synthesis may crash on macOS Sequoia+)");
+      }
+      if (!nativeHelpers.ocr) {
+        readiness = readiness === "ready" ? "degraded" : readiness;
+        issues.push("Native OCR helper not found (OCR may fail on macOS Sequoia+)");
+      }
+    }
+
+    const clients: Record<string, string> = {};
+    for (const bin of ["claude", "codex", "opencode", "npx"]) {
+      try {
+        const path = execFileSync("which", [bin], { encoding: "utf-8", timeout: 2000 }).trim();
+        clients[bin] = path || "not found";
+      } catch {
+        clients[bin] = "not found";
+      }
+    }
+
+    const recommendations: string[] = [];
+    if (readiness === "blocked") {
+      recommendations.push("Grant missing permissions in System Settings > Privacy & Security, then restart the MCP client.");
+    } else if (readiness === "degraded") {
+      if (nativeHelpers && (!nativeHelpers.cgevent || !nativeHelpers.ocr)) {
+        recommendations.push("Run 'npm run build' to compile native Swift helpers.");
+      }
+    } else {
+      recommendations.push("All checks passed. MCP client can proceed with automation.");
+    }
+
     const report = {
-      ok: permissions.granted && !screenLocked,
+      readiness,
+      issues: issues.length > 0 ? issues : undefined,
+      recommendations,
       platform: process.platform,
       node: process.version,
       permissions,
       screenLocked,
+      nativeHelpers,
+      clients,
       safety: {
         urlBlocklist: true,
         lockScreenGuard: process.platform === "darwin",
         typedTextInjectionScan: true,
       },
       stdioCommand: "ucu-mcp",
-      clients: {
-        claudeCodeCli: "Run ucu-mcp as an MCP stdio server.",
-        claudeCodeDesktop: "Configure ucu-mcp as a local MCP stdio server.",
-        openCode: "Configure ucu-mcp as a local MCP stdio server.",
-      },
     };
     return { content: [{ type: "text", text: JSON.stringify(report, null, 2) }] };
   });
@@ -511,8 +574,8 @@ export function registerTools(server: McpServer): void {
     const { granted } = await checkPermission("accessibility");
     if (!granted) throw new PermissionError("accessibility", process.platform);
     while (Date.now() < deadline) {
-      const results = await getPlatform().findElement(query);
-      if (results.length > 0) return { content: [{ type: "text", text: JSON.stringify({ found: true, element: results[0] }, null, 2) }] };
+      const response = await getPlatform().findElement(query);
+      if (response.results.length > 0) return { content: [{ type: "text", text: JSON.stringify({ found: true, element: response.results[0] }, null, 2) }] };
       await new Promise(r => setTimeout(r, interval));
     }
     return { content: [{ type: "text", text: JSON.stringify({ found: false, reason: "timeout" }) }] };
@@ -555,11 +618,13 @@ export function registerTools(server: McpServer): void {
   registerTool("find_element", "Find accessibility elements by text, role, or app", {
     text: z.string().optional().describe("Text to search"), role: z.string().optional().describe("AX role"), app: z.string().optional().describe("Target app"),
     depth: z.number().optional().describe("AX tree depth"), includeBounds: z.boolean().default(true).describe("Include bounds"), maxResults: z.number().min(1).max(200).default(50).describe("Max results"),
+    textMode: z.enum(["contains", "exact", "regex"]).default("contains").describe("Text matching mode: contains (default), exact, or regex"),
+    visibleOnly: z.boolean().default(false).describe("Only return elements with valid on-screen bounds"),
   }, async (params) => {
     const effectiveApp = params.app || getActiveTarget()?.appName;
-    const results = await withSafety<FindElementResult[]>({ action: "find_element", params: {}, requiresAccessibility: true,
-      execute: () => getPlatform().findElement({ text: params.text, role: params.role, app: effectiveApp, depth: params.depth, includeBounds: params.includeBounds, maxResults: params.maxResults }) });
-    return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
+    const response = await withSafety<FindElementResponse>({ action: "find_element", params: {}, requiresAccessibility: true,
+      execute: () => getPlatform().findElement({ text: params.text, role: params.role, app: effectiveApp, depth: params.depth, includeBounds: params.includeBounds, maxResults: params.maxResults, textMode: params.textMode, visibleOnly: params.visibleOnly }) });
+    return { content: [{ type: "text", text: JSON.stringify({ results: response.results, metrics: response.metrics }, null, 2) }] };
   });
   registry.register("find_element");
 

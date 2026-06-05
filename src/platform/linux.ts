@@ -1,4 +1,4 @@
-import type { Platform, ScreenRegion, ScreenSize, CursorPosition, WindowInfo, WindowState, OcrResult, FindElementOptions, FindElementResult } from "./base.js";
+import type { Platform, ScreenRegion, ScreenSize, CursorPosition, WindowInfo, WindowState, OcrResult, FindElementOptions, FindElementResponse } from "./base.js";
 
 /**
  * Linux platform adapter (AT-SPI2 + xdotool fallback)
@@ -64,7 +64,7 @@ export class LinuxPlatform implements Platform {
     throw new Error("Linux OCR not yet implemented");
   }
 
-  async findElement(_options: FindElementOptions): Promise<FindElementResult[]> {
+  async findElement(_options: FindElementOptions): Promise<FindElementResponse> {
     throw new Error("Not implemented: Linux findElement");
   }
 

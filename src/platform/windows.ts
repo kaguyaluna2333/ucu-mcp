@@ -1,4 +1,4 @@
-import type { Platform, ScreenRegion, ScreenSize, CursorPosition, WindowInfo, WindowState, OcrResult, FindElementOptions, FindElementResult } from "./base.js";
+import type { Platform, ScreenRegion, ScreenSize, CursorPosition, WindowInfo, WindowState, OcrResult, FindElementOptions, FindElementResponse } from "./base.js";
 
 export class WindowsPlatform implements Platform {
   async screenshot(_display?: number, _region?: ScreenRegion): Promise<Buffer> {
@@ -50,7 +50,7 @@ export class WindowsPlatform implements Platform {
     throw new Error("Not implemented: Windows OCR");
   }
 
-  async findElement(_options: FindElementOptions): Promise<FindElementResult[]> {
+  async findElement(_options: FindElementOptions): Promise<FindElementResponse> {
     throw new Error("Not implemented: Windows findElement");
   }
 

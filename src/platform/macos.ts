@@ -1,7 +1,7 @@
 import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
-import type { Platform, ScreenRegion, ScreenSize, CursorPosition, WindowInfo, WindowState, ElementInfo, OcrResult, FindElementOptions, FindElementResult, AppInfo, AppTarget, BrowserContext, ScreenshotOptions } from "./base.js";
+import type { Platform, ScreenRegion, ScreenSize, CursorPosition, WindowInfo, WindowState, ElementInfo, OcrResult, FindElementOptions, FindElementResult, FindElementResponse, AppInfo, AppTarget, BrowserContext, ScreenshotOptions } from "./base.js";
 import { captureFullScreen, captureRegion } from "../utils/screenshot.js";
 import { click as inputClick, doubleClick as inputDoubleClick, move as inputMove, drag as inputDrag, scroll as inputScroll, typeText, pressShortcut } from "../utils/input.js";
 import { CaptureError, ElementNotFoundError, InputSynthesisError, PermissionError, PlatformError, TargetStaleError, UcuError, WindowNotFoundError } from "../util/errors.js";
@@ -856,15 +856,26 @@ export class MacOSPlatform implements Platform {
 
   // ── Accessibility (AX) Element Actions ───────────────────────────────────
 
-  async findElement(options: FindElementOptions): Promise<FindElementResult[]> {
+  async findElement(options: FindElementOptions): Promise<FindElementResponse> {
     this.evictExpiredCacheEntries();
-    const { text, role, app, depth, includeBounds = true } = options;
+    const { text, role, app, depth, includeBounds = true, textMode = "contains", visibleOnly = false } = options;
     const effectiveApp = app || this.activeTarget?.appName;
     const maxDepth = Math.min(depth || 5, 10);
     const maxResults = Math.min(Math.max(options.maxResults ?? 50, 1), 200);
     const escapedApp = (effectiveApp || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
     const escapedText = text ? text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$') : "";
     const escapedRole = role ? role.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$') : "";
+
+    // Pre-compile regex on TS side to validate syntax before passing to JXA
+    if (text && textMode === "regex") {
+      try {
+        new RegExp(text);
+      } catch {
+        throw new PlatformError(`Invalid regex pattern: ${text}`);
+      }
+    }
+
+    const startTime = Date.now();
 
       const jxaScript = `
         var se = Application('System Events');
@@ -874,14 +885,57 @@ export class MacOSPlatform implements Platform {
         }
       }
         var results = [];
+      var scannedCount = 0;
+      var matchedCount = 0;
       var resultCount = [0];
       var maxResults = ${maxResults};
       var includeBounds = ${includeBounds ? "true" : "false"};
+      var visibleOnly = ${visibleOnly ? "true" : "false"};
+      var textMode = "${textMode}";
 
       var textFilter = ${text ? `"${escapedText}"` : "null"};
       var roleFilter = ${role ? `"${escapedRole}"` : "null"};
 
+      function isVisible(elem) {
+        try {
+          var pos = elem.position();
+          var sz = elem.size();
+          if (!pos || !sz) return false;
+          return sz[0] > 0 && sz[1] > 0 && pos[0] > -10000 && pos[1] > -10000;
+        } catch(e) {
+          return false;
+        }
+      }
+
+      function textMatches(elemName, elemValue, elemDesc) {
+        if (textFilter === null) return true;
+        var sources = [elemName, elemValue, elemDesc];
+        if (textMode === "exact") {
+          var t = textFilter.toLowerCase();
+          for (var i = 0; i < sources.length; i++) {
+            if (sources[i].toLowerCase() === t) return true;
+          }
+          return false;
+        } else if (textMode === "regex") {
+          try {
+            var re = new RegExp(textFilter, "i");
+            for (var i = 0; i < sources.length; i++) {
+              if (re.test(sources[i])) return true;
+            }
+          } catch(e) {}
+          return false;
+        } else {
+          // contains (default)
+          var t = textFilter.toLowerCase();
+          for (var i = 0; i < sources.length; i++) {
+            if (sources[i].toLowerCase().indexOf(t) !== -1) return true;
+          }
+          return false;
+        }
+      }
+
       function matches(elem) {
+        scannedCount++;
         var elemName = '';
         var elemRole = '';
         var elemDesc = '';
@@ -891,17 +945,13 @@ export class MacOSPlatform implements Platform {
         try { elemDesc = elem.description() || ''; } catch(e) {}
         try { var v = elem.value(); elemValue = (v !== undefined && v !== null) ? String(v) : ''; } catch(e) {}
 
-        if (textFilter !== null) {
-          var t = textFilter.toLowerCase();
-          if (elemName.toLowerCase().indexOf(t) === -1 &&
-              elemValue.toLowerCase().indexOf(t) === -1 &&
-              elemDesc.toLowerCase().indexOf(t) === -1) {
-            return false;
-          }
-        }
+        if (visibleOnly && !isVisible(elem)) return false;
+
+        if (!textMatches(elemName, elemValue, elemDesc)) return false;
         if (roleFilter !== null) {
           if (elemRole !== roleFilter) return false;
         }
+        matchedCount++;
         return true;
       }
 
@@ -984,7 +1034,7 @@ export class MacOSPlatform implements Platform {
         }
       } catch(e) {}
 
-      JSON.stringify(results);
+      JSON.stringify({results: results, scannedCount: scannedCount, matchedCount: matchedCount});
     `;
 
     try {
@@ -993,8 +1043,9 @@ export class MacOSPlatform implements Platform {
         "-e", jxaScript,
       ], { encoding: "utf-8", timeout: 30000 }).trim();
 
-      const results = JSON.parse(out) as FindElementResult[];
-      for (const result of results) {
+      const parsed = JSON.parse(out) as { results: FindElementResult[]; scannedCount: number; matchedCount: number };
+      const durationMs = Date.now() - startTime;
+      for (const result of parsed.results) {
         const appName = effectiveApp || result.id.split("/")[0] || "";
         this.elementCache.set(result.id, {
           elementId: result.id,
@@ -1010,7 +1061,15 @@ export class MacOSPlatform implements Platform {
         });
       }
       this.evictOverflowCacheEntries();
-      return results;
+      return {
+        results: parsed.results,
+        metrics: {
+          scannedCount: parsed.scannedCount,
+          matchedCount: parsed.matchedCount,
+          durationMs,
+          truncated: parsed.results.length >= maxResults,
+        },
+      };
     } catch (error) {
       rethrowAccessibilityError(error, "find_element");
     }

@@ -94,6 +94,8 @@ export interface FindElementOptions {
   depth?: number;
   includeBounds?: boolean;
   maxResults?: number;
+  textMode?: "contains" | "exact" | "regex";
+  visibleOnly?: boolean;
 }
 
 export interface FindElementResult {
@@ -108,6 +110,18 @@ export interface FindElementResult {
     height: number;
   };
   description?: string;
+}
+
+export interface FindElementMetrics {
+  scannedCount: number;
+  matchedCount: number;
+  durationMs: number;
+  truncated: boolean;
+}
+
+export interface FindElementResponse {
+  results: FindElementResult[];
+  metrics: FindElementMetrics;
 }
 
 export interface WindowState {
@@ -148,7 +162,7 @@ export interface Platform {
   key(keys: string[]): Promise<void>;
 
   // Accessibility (AX) Element Actions
-  findElement(options: FindElementOptions): Promise<FindElementResult[]>;
+  findElement(options: FindElementOptions): Promise<FindElementResponse>;
   clickElement(elementId: string, app?: string): Promise<void>;
   typeInElement(elementId: string, text: string, app?: string, clearFirst?: boolean): Promise<void>;
   setElementValue?(elementId: string, value: string, app?: string): Promise<void>;

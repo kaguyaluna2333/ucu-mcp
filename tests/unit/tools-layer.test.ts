@@ -57,7 +57,7 @@ function defaults() {
   mockPlat.type.mockResolvedValue(undefined);
   mockPlat.key.mockResolvedValue(undefined);
   mockPlat.ocr.mockResolvedValue({ elements: [], fullText: "" });
-  mockPlat.findElement.mockResolvedValue([{ id: "N/w0/1", role: "AXButton", name: "Save" }]);
+  mockPlat.findElement.mockResolvedValue({ results: [{ id: "N/w0/1", role: "AXButton", name: "Save" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 5, truncated: false } });
   mockPlat.clickElement.mockResolvedValue(undefined);
   mockPlat.typeInElement.mockResolvedValue(undefined);
   mockPlat.setElementValue.mockResolvedValue(undefined);
@@ -121,7 +121,8 @@ describe("doctor tool", () => {
     expect(d.platform).toBe(process.platform);
     expect(d.safety.urlBlocklist).toBe(true);
     expect(d.safety.typedTextInjectionScan).toBe(true);
-    expect(d.clients).toHaveProperty("claudeCodeCli");
+    expect(d.readiness).toBeDefined();
+    expect(d.clients).toHaveProperty("claude");
   });
 
   it("reports screenLocked=true", async () => {
@@ -223,7 +224,7 @@ describe("wait_for_element", () => {
   });
 
   it("returns found=false on timeout", async () => {
-    mockPlat.findElement.mockResolvedValue([]);
+    mockPlat.findElement.mockResolvedValue({ results: [], metrics: { scannedCount: 0, matchedCount: 0, durationMs: 1, truncated: false } });
     const p = tools.get("wait_for_element")!.handler({ text: "X", timeout: 200, interval: 50 });
     await vi.advanceTimersByTimeAsync(300);
     const r = await p;
@@ -231,7 +232,7 @@ describe("wait_for_element", () => {
   });
 
   it("accepts timeoutMs and intervalMs aliases", async () => {
-    mockPlat.findElement.mockResolvedValue([]);
+    mockPlat.findElement.mockResolvedValue({ results: [], metrics: { scannedCount: 0, matchedCount: 0, durationMs: 1, truncated: false } });
     const p = tools.get("wait_for_element")!.handler({ text: "X", timeoutMs: 200, intervalMs: 50 });
     await vi.advanceTimersByTimeAsync(300);
     const r = await p;
