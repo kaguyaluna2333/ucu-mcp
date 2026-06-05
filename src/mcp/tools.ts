@@ -9,7 +9,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Platform, WindowInfo, CursorPosition, OcrResult, FindElementResult, FindElementResponse, WindowState, AppTarget } from "../platform/base.js";
 import { MacOSPlatform } from "../platform/macos.js";
-import { SafetyGuard } from "../safety/guard.js";
+import { SafetyGuard, classifyAction } from "../safety/guard.js";
 import { checkPermission } from "../safety/permissions.js";
 import { retry } from "../util/retry.js";
 import { createLogger } from "../util/logger.js";
@@ -251,6 +251,7 @@ async function actionResponse(
 interface SafetyAction {
   action: string; params: Record<string, unknown>;
   requiresAccessibility?: boolean; requiresScreenRecording?: boolean;
+  skipUserActivityPause?: boolean;
   dryRun?: () => Promise<string>; execute: () => Promise<unknown>;
 }
 const retryableActions = new Set([
@@ -268,7 +269,9 @@ const retryableActions = new Set([
 async function withSafety<T>(sa: SafetyAction): Promise<T> {
   const platform = getPlatform();
   if (platform.isScreenLocked?.()) throw new SafetyError("Screen is locked");
-  const check = safety.checkAction(sa.action, sa.params);
+  const check = safety.checkAction(sa.action, sa.params, {
+    skipUserActivityPause: sa.skipUserActivityPause ?? classifyAction(sa.action) === "observe",
+  });
   if (!check.allowed) throw new SafetyError(check.reason ?? "Action blocked by safety guard");
   if (sa.requiresAccessibility) { const { granted } = await checkPermission("accessibility"); if (!granted) throw new PermissionError("accessibility", process.platform); }
   if (sa.requiresScreenRecording) { const { granted } = await checkPermission("screenRecording"); if (!granted) throw new PermissionError("screenRecording", process.platform); }

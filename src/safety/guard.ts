@@ -115,6 +115,45 @@ function normalizeShortcut(raw: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Action classification (observe vs input)
+// ---------------------------------------------------------------------------
+
+/** Actions that observe UI/system state without altering it. */
+export const OBSERVE_ACTIONS: ReadonlySet<string> = new Set([
+  "screenshot",
+  "list_windows",
+  "list_apps",
+  "get_window_state",
+  "get_screen_size",
+  "get_cursor_position",
+  "ocr",
+  "find_element",
+  "wait",
+  "wait_for_element",
+  "doctor",
+]);
+
+/** Actions that synthesize user input — need full user-activity protection. */
+export const INPUT_ACTIONS: ReadonlySet<string> = new Set([
+  "click",
+  "double_click",
+  "scroll",
+  "drag",
+  "move",
+  "type_text",
+  "press_key",
+  "click_element",
+  "type_in_element",
+  "set_value",
+]);
+
+export function classifyAction(action: string): "observe" | "input" | "other" {
+  if (OBSERVE_ACTIONS.has(action)) return "observe";
+  if (INPUT_ACTIONS.has(action)) return "input";
+  return "other";
+}
+
+// ---------------------------------------------------------------------------
 // SafetyGuard
 // ---------------------------------------------------------------------------
 
@@ -164,6 +203,7 @@ export class SafetyGuard {
   checkAction(
     action: string,
     params: Record<string, unknown> = {},
+    options: { skipUserActivityPause?: boolean } = {},
   ): SafetyCheckResult {
     // 1. Key blocklist -------------------------------------------------------
     if (action === "key" || action === "press_key") {
@@ -238,8 +278,8 @@ export class SafetyGuard {
     }
     this.lastActionTime = now;
 
-    // 6. User activity pause --------------------------------------------------
-    if (this.isUserActivityPauseActive()) {
+    // 6. User activity pause (skipped for observe-class actions) -----------------
+    if (!options.skipUserActivityPause && this.isUserActivityPauseActive()) {
       return {
         allowed: false,
         reason: `User activity detected — pausing automation for ${this.userActivityPauseMs}ms`,

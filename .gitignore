@@ -4,3 +4,15 @@ dist/
 *.d.ts
 !bin/*.ts
 .env
+.claude/
+.codex/
+.DS_Store
+.codex/hooks.json
+.codex/postmortem-*.md
+.idea/
+.vscode/
+*.swp
+*.swo
+*.log
+coverage/
+*.tsbuildinfo

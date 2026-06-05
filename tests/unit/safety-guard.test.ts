@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { SafetyGuard } from "../../src/safety/guard.js";
+import {
+  SafetyGuard,
+  OBSERVE_ACTIONS,
+  INPUT_ACTIONS,
+  classifyAction,
+} from "../../src/safety/guard.js";
 
 describe("SafetyGuard", () => {
   it("should block cmd+q key combination", () => {
@@ -119,5 +124,89 @@ describe("SafetyGuard", () => {
     guard.recordUserActivity();
     const result = guard.checkAction("click", { x: 100, y: 200 });
     expect(result.allowed).toBe(true);
+  });
+});
+
+describe("OBSERVE_ACTIONS / INPUT_ACTIONS classification (M6.1)", () => {
+  it("OBSERVE_ACTIONS contains all read-only tools", () => {
+    const expected = [
+      "screenshot",
+      "list_windows",
+      "list_apps",
+      "get_window_state",
+      "get_screen_size",
+      "get_cursor_position",
+      "ocr",
+      "find_element",
+      "wait",
+      "wait_for_element",
+      "doctor",
+    ];
+    for (const action of expected) {
+      expect(OBSERVE_ACTIONS.has(action)).toBe(true);
+    }
+  });
+
+  it("INPUT_ACTIONS contains all mutating tools", () => {
+    const expected = [
+      "click",
+      "double_click",
+      "scroll",
+      "drag",
+      "move",
+      "type_text",
+      "press_key",
+      "click_element",
+      "type_in_element",
+      "set_value",
+    ];
+    for (const action of expected) {
+      expect(INPUT_ACTIONS.has(action)).toBe(true);
+    }
+  });
+
+  it("OBSERVE_ACTIONS and INPUT_ACTIONS do not overlap", () => {
+    const overlap: string[] = [];
+    for (const action of OBSERVE_ACTIONS) {
+      if (INPUT_ACTIONS.has(action)) overlap.push(action);
+    }
+    expect(overlap).toEqual([]);
+  });
+
+  it("classifyAction returns correct class for observe/input/unknown actions", () => {
+    expect(classifyAction("screenshot")).toBe("observe");
+    expect(classifyAction("list_windows")).toBe("observe");
+    expect(classifyAction("doctor")).toBe("observe");
+    expect(classifyAction("click")).toBe("input");
+    expect(classifyAction("type_text")).toBe("input");
+    expect(classifyAction("press_key")).toBe("input");
+    expect(classifyAction("totally_unknown_action_xyz")).toBe("other");
+    expect(classifyAction("")).toBe("other");
+  });
+
+  it("checkAction skips user activity pause for observe actions", () => {
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    guard.setUserActivityPauseMs(5000);
+    guard.recordUserActivity();
+
+    const skipped = guard.checkAction("screenshot", {}, { skipUserActivityPause: true });
+    expect(skipped.allowed).toBe(true);
+
+    const notSkipped = guard.checkAction("screenshot", {});
+    expect(notSkipped.allowed).toBe(false);
+    expect(notSkipped.reason).toContain("User activity detected");
+  });
+
+  it("checkAction applies user activity pause for input actions", () => {
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    guard.setUserActivityPauseMs(5000);
+    guard.recordUserActivity();
+
+    const blocked = guard.checkAction("click");
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.reason).toContain("User activity detected");
+
+    const explicitSkip = guard.checkAction("click", {}, { skipUserActivityPause: true });
+    expect(explicitSkip.allowed).toBe(true);
   });
 });
