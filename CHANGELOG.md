@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Action Receipt v1 — unified receipt structure for all action-class tools (click, double_click, scroll, drag, move, type_text, press_key, click_element, set_value, type_in_element)
+- Receipt fields: actionId (base36-timestamp unique ID), action, status (ok/partial/blocked), target (location context), result (business result), capture (screenshot metadata), warnings, next (suggested next step)
+- Partial receipt when action succeeds but post-action screenshot fails: status="partial", capture.error contains error details, warnings includes "Post-action screenshot capture failed"
+
+### Changed
+
+- Action tool responses now wrap business results under `result` instead of returning them at the top level
+- captureAfter failures now surface through receipt.capture.error instead of a flat captureError object
+
+### Tests
+
+- Updated tools-layer tests to assert receipt.result, receipt.capture.status, receipt.status, and receipt.warnings
+
 ## [0.2.0] - 2026-06-05
 
 ### Changed

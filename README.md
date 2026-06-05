@@ -121,7 +121,7 @@ UCU-MCP provides 22 tools across five categories:
 | `wait` | Wait for UI state to settle after launches, animations, or navigation | `ms` |
 | `wait_for_element` | Poll the AX tree until a matching element appears | `text?`, `role?`, `app?`, `timeout?`, `timeoutMs?`, `interval?`, `intervalMs?` |
 
-Action tools accept `captureAfter`, `captureMaxWidth`, and `captureFormat` so an agent can receive a post-action screenshot as a second MCP image content item in the same response instead of spending another round trip on `screenshot`.
+Action tools accept `captureAfter`, `captureMaxWidth`, and `captureFormat` so an agent can receive a post-action screenshot as a second MCP image content item in the same response instead of spending another round trip on `screenshot`. When `captureAfter` is requested and the action succeeds, the tool returns an `ActionReceipt` (see the Action Receipt section below) with `capture.status: "ok"`. If post-action capture fails, the receipt has `status: "partial"` and `capture.status: "error"` with the error details. If `captureAfter` is omitted, `capture.status` is `"skipped"`.
 
 For fast AX discovery on large windows, use `find_element` with `includeBounds=false` and a small `maxResults`. Keep bounds enabled when the result may be used for coordinate fallback.
 
@@ -207,6 +207,90 @@ The AX (Accessibility) element tools let you interact with UI controls by their 
     "app": "Safari",
     "clearFirst": true
   }
+}
+```
+
+## Action Receipt
+
+Action tools (`click`, `double_click`, `scroll`, `drag`, `move`, `type_text`, `press_key`, `click_element`, `set_value`, `type_in_element`) return a unified `ActionReceipt` JSON object that wraps the action result, target information, and optional post-action screenshot metadata.
+
+### Receipt structure
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `actionId` | `string` | Unique base36-timestamp ID (e.g. `a1x9z2k-1`) |
+| `action` | `string` | Tool name that produced this receipt |
+| `status` | `"ok" \| "partial" \| "blocked"` | Overall action status |
+| `target` | `object` | What was acted upon (coordinates, elementId, app, windowId) |
+| `result` | `object` | Original business result (clicked, x, y, etc.) |
+| `capture` | `object` | Screenshot metadata (requested, status, format, maxWidth, error) |
+| `warnings` | `string[]` | Non-fatal warnings array |
+| `next` | `string` | Suggested next action |
+
+### Examples
+
+**Success with captureAfter:**
+
+```json
+{
+  "actionId": "a1x9z2k-1",
+  "action": "click",
+  "status": "ok",
+  "target": { "x": 100, "y": 200 },
+  "result": { "clicked": true, "x": 100, "y": 200 },
+  "capture": {
+    "requested": true,
+    "status": "ok",
+    "format": "jpeg",
+    "maxWidth": 1280
+  },
+  "warnings": [],
+  "next": "find_element or get_window_state"
+}
+```
+
+**Success without captureAfter:**
+
+```json
+{
+  "actionId": "a1x9z2k-2",
+  "action": "click_element",
+  "status": "ok",
+  "target": { "elementId": "AXButton-42", "app": "Safari" },
+  "result": { "clicked": true, "elementId": "AXButton-42" },
+  "capture": {
+    "requested": false,
+    "status": "skipped"
+  },
+  "warnings": [],
+  "next": "find_element or get_window_state"
+}
+```
+
+**Partial when capture fails:**
+
+```json
+{
+  "actionId": "a1x9z2k-3",
+  "action": "click",
+  "status": "partial",
+  "target": { "x": 100, "y": 200 },
+  "result": { "clicked": true, "x": 100, "y": 200 },
+  "capture": {
+    "requested": true,
+    "status": "error",
+    "format": "jpeg",
+    "maxWidth": 1280,
+    "error": {
+      "name": "CaptureError",
+      "code": "CAPTURE_FAILED",
+      "retryable": true,
+      "message": "Screenshot capture failed after action",
+      "recovery": "Check Screen Recording permission and retry."
+    }
+  },
+  "warnings": ["Post-action screenshot capture failed"],
+  "next": "screenshot"
 }
 ```
 

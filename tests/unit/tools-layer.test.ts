@@ -213,7 +213,11 @@ describe("captureAfter", () => {
       captureMaxWidth: 640,
     });
     const d = JSON.parse(r.content[0].text!);
-    expect(d.actionResult.clicked).toBe(true);
+    expect(d.result.clicked).toBe(true);
+    expect(d.status).toBe("ok");
+    expect(d.capture.status).toBe("ok");
+    expect(d.capture.requested).toBe(true);
+    expect(d.warnings).toEqual([]);
     expect(r.content[1]).toMatchObject({
       type: "image",
       data: Buffer.from("png").toString("base64"),
@@ -228,8 +232,36 @@ describe("captureAfter", () => {
   it("returns plain result when captureAfter=false", async () => {
     const r = await tools.get("click")!.handler({ x: 10, y: 20, captureAfter: false });
     const d = JSON.parse(r.content[0].text!);
-    expect(d.clicked).toBe(true);
-    expect(d.screenshot).toBeUndefined();
+    expect(d.result.clicked).toBe(true);
+    expect(d.status).toBe("ok");
+    expect(d.capture.status).toBe("skipped");
+    expect(d.capture.requested).toBe(false);
+    expect(d.warnings).toEqual([]);
+    expect(d.next).toBe("find_element or get_window_state");
+  });
+
+  it("reports captureAfter screenshot failures without hiding the action result", async () => {
+    mockPlat.screenshot.mockRejectedValueOnce(new Error("screen recording denied"));
+
+    const r = await tools.get("click")!.handler({
+      x: 10,
+      y: 20,
+      captureAfter: true,
+    });
+
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toHaveLength(1);
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.status).toBe("partial");
+    expect(d.result).toMatchObject({ clicked: true, x: 10, y: 20 });
+    expect(d.capture.status).toBe("error");
+    expect(d.capture.error).toMatchObject({
+      code: "UNKNOWN_ERROR",
+      retryable: false,
+      message: "screen recording denied",
+    });
+    expect(d.capture.error.recovery).toBeTruthy();
+    expect(d.warnings).toContain("Post-action screenshot capture failed");
   });
 });
 
@@ -238,11 +270,14 @@ describe("drag — window-relative coords", () => {
     const r = await tools.get("drag")!.handler({ startX: 1, startY: 2, endX: 30, endY: 40, windowId: "w1" });
     expect(mockPlat.drag).toHaveBeenCalledWith(101, 202, 130, 240, undefined, undefined);
     expect(JSON.parse(r.content[0].text!)).toMatchObject({
-      dragged: true,
-      startX: 101,
-      startY: 202,
-      endX: 130,
-      endY: 240,
+      result: {
+        dragged: true,
+        startX: 101,
+        startY: 202,
+        endX: 130,
+        endY: 240,
+      },
+      status: "ok",
     });
   });
 });
@@ -380,7 +415,7 @@ describe("press_key key/keys param", () => {
   it("accepts single key", async () => {
     const r = await tools.get("press_key")!.handler({ key: "enter" });
     expect(mockPlat.key).toHaveBeenCalledWith(["enter"]);
-    expect(JSON.parse(r.content[0].text!).keys).toEqual(["enter"]);
+    expect(JSON.parse(r.content[0].text!).result.keys).toEqual(["enter"]);
   });
 
   it("accepts keys array", async () => {
@@ -391,7 +426,7 @@ describe("press_key key/keys param", () => {
   it("accepts key plus modifiers", async () => {
     const r = await tools.get("press_key")!.handler({ key: "c", modifiers: ["cmd"] });
     expect(mockPlat.key).toHaveBeenCalledWith(["cmd", "c"]);
-    expect(JSON.parse(r.content[0].text!).keys).toEqual(["cmd", "c"]);
+    expect(JSON.parse(r.content[0].text!).result.keys).toEqual(["cmd", "c"]);
   });
 
   it("throws without key or keys", async () => {

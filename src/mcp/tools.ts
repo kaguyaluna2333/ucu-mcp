@@ -76,33 +76,135 @@ function recoveryHint(code: string): string {
   }
 }
 
-function mcpErrorResponse(error: unknown): ToolResult {
+function errorDetails(error: unknown): Record<string, unknown> {
   const err = error instanceof Error ? error : new Error(String(error));
   const code = error instanceof UcuError ? error.code : "UNKNOWN_ERROR";
   const retryable = error instanceof UcuError ? error.retryable : false;
   return {
+    name: err.name,
+    code,
+    retryable,
+    message: err.message,
+    recovery: recoveryHint(code),
+  };
+}
+
+/**
+ * Unified Action Receipt returned by all action-class tools.
+ */
+interface ActionReceipt {
+  /** Short unique ID for this tool call */
+  actionId: string;
+  /** Tool name / action type */
+  action: string;
+  /** Overall status: ok | partial | blocked */
+  status: "ok" | "partial" | "blocked";
+  /** What the action acted upon */
+  target: {
+    app?: string;
+    windowId?: string;
+    elementId?: string;
+    x?: number;
+    y?: number;
+    startX?: number;
+    startY?: number;
+    endX?: number;
+    endY?: number;
+  };
+  /** Original business result of the tool */
+  result: Record<string, unknown>;
+  /** Screenshot capture metadata */
+  capture: {
+    requested: boolean;
+    status: "ok" | "skipped" | "error";
+    format?: string;
+    maxWidth?: number;
+    error?: Record<string, unknown>;
+  };
+  /** Non-fatal warnings */
+  warnings: string[];
+  /** Suggested next observation or recovery action */
+  next: string;
+}
+
+let _actionCounter = 0;
+function nextActionId(): string {
+  _actionCounter = (_actionCounter + 1) % 1_000_000;
+  return `a${Date.now().toString(36)}-${_actionCounter.toString(36)}`;
+}
+
+function buildActionReceipt(
+  action: string,
+  status: ActionReceipt["status"],
+  target: ActionReceipt["target"],
+  result: Record<string, unknown>,
+  captureRequested: boolean,
+  captureFormat?: string,
+  captureMaxWidth?: number,
+  captureError?: Record<string, unknown>,
+  warnings: string[] = [],
+): ActionReceipt {
+  const captureStatus = captureRequested
+    ? captureError ? "error" : "ok"
+    : "skipped";
+  return {
+    actionId: nextActionId(),
+    action,
+    status,
+    target,
+    result,
+    capture: {
+      requested: captureRequested,
+      status: captureStatus,
+      ...(captureFormat && { format: captureFormat }),
+      ...(captureMaxWidth && { maxWidth: captureMaxWidth }),
+      ...(captureError && { error: captureError }),
+    },
+    warnings,
+    next: captureError
+      ? "screenshot"
+      : status === "partial"
+        ? "get_window_state"
+        : "find_element or get_window_state",
+  };
+}
+
+function mcpErrorResponse(error: unknown): ToolResult {
+  return {
     isError: true,
     content: [
       jsonText({
-        error: {
-          name: err.name,
-          code,
-          retryable,
-          message: err.message,
-          recovery: recoveryHint(code),
-        },
+        error: errorDetails(error),
       }),
     ],
   };
 }
 
 async function actionResponse(
-  result: unknown,
+  action: string,
+  result: Record<string, unknown>,
+  target: ActionReceipt["target"],
   captureAfter?: boolean,
   captureFormat: "png" | "jpeg" = "jpeg",
   captureMaxWidth: number = 1280,
+  warnings: string[] = [],
 ): Promise<{ content: ToolContent[] }> {
-  if (!captureAfter) return { content: [jsonText(result)] };
+  const receipt = buildActionReceipt(
+    action,
+    "ok",
+    target,
+    result,
+    captureAfter ?? false,
+    captureFormat,
+    captureMaxWidth,
+    undefined,
+    warnings,
+  );
+
+  if (!captureAfter) {
+    return { content: [jsonText(receipt)] };
+  }
+
   try {
     const buf = await getPlatform().screenshot(undefined, undefined, {
       format: captureFormat,
@@ -110,7 +212,7 @@ async function actionResponse(
     });
     return {
       content: [
-        jsonText({ actionResult: result }),
+        jsonText(receipt),
         {
           type: "image",
           data: buf.toString("base64"),
@@ -118,8 +220,19 @@ async function actionResponse(
         },
       ],
     };
-  } catch {
-    return { content: [jsonText(result)] };
+  } catch (error) {
+    const partialReceipt = buildActionReceipt(
+      action,
+      "partial",
+      target,
+      result,
+      true,
+      captureFormat,
+      captureMaxWidth,
+      errorDetails(error),
+      [...warnings, "Post-action screenshot capture failed"],
+    );
+    return { content: [jsonText(partialReceipt)] };
   }
 }
 
@@ -263,7 +376,7 @@ export function registerTools(server: McpServer): void {
   }, async (params) => {
     const pt = await resolvePoint(params.x, params.y, params.windowId);
     await withSafety<void>({ action: "click", params: { x: pt.x, y: pt.y }, requiresAccessibility: true, execute: () => getPlatform().click(pt.x, pt.y, params.button) });
-    return actionResponse({ clicked: true, x: pt.x, y: pt.y }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    return actionResponse("click", { clicked: true, x: pt.x, y: pt.y }, { x: pt.x, y: pt.y, windowId: params.windowId }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("click");
 
@@ -275,7 +388,7 @@ export function registerTools(server: McpServer): void {
   }, async (params) => {
     const pt = await resolvePoint(params.x, params.y, params.windowId);
     await withSafety<void>({ action: "click", params: { x: pt.x, y: pt.y, doubleClick: true }, requiresAccessibility: true, execute: () => getPlatform().click(pt.x, pt.y, params.button, true) });
-    return actionResponse({ doubleClicked: true, x: pt.x, y: pt.y }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    return actionResponse("double_click", { doubleClicked: true, x: pt.x, y: pt.y }, { x: pt.x, y: pt.y, windowId: params.windowId }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("double_click");
 
@@ -286,7 +399,7 @@ export function registerTools(server: McpServer): void {
   }, async (params) => {
     if (params.windowId) throw new UnsupportedParameterError("windowId-targeted keyboard typing is not implemented");
     await withSafety<void>({ action: "type_text", params: { text: params.text }, requiresAccessibility: true, execute: () => getPlatform().type(params.text, params.delay) });
-    return actionResponse({ typed: true, charCount: params.text.length }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    return actionResponse("type_text", { typed: true, charCount: params.text.length }, {}, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("type_text");
 
@@ -304,7 +417,7 @@ export function registerTools(server: McpServer): void {
     ];
     if (keys.length === 0) throw new UnsupportedParameterError("press_key requires at least one key");
     await withSafety<void>({ action: "press_key", params: { keys }, requiresAccessibility: true, execute: () => getPlatform().key(keys) });
-    return actionResponse({ pressed: true, keys }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    return actionResponse("press_key", { pressed: true, keys }, {}, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("press_key");
 
@@ -317,7 +430,7 @@ export function registerTools(server: McpServer): void {
     const pt = await resolvePoint(params.x, params.y, params.windowId);
     const deltaX = params.deltaX ?? 0;
     await withSafety<void>({ action: "scroll", params: { x: pt.x, y: pt.y }, requiresAccessibility: true, execute: () => getPlatform().scroll(pt.x, pt.y, deltaX, params.deltaY) });
-    return actionResponse({ scrolled: true, x: pt.x, y: pt.y }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    return actionResponse("scroll", { scrolled: true, x: pt.x, y: pt.y }, { x: pt.x, y: pt.y, windowId: params.windowId }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("scroll");
 
@@ -332,7 +445,7 @@ export function registerTools(server: McpServer): void {
     const start = await resolvePoint(params.startX, params.startY, params.windowId);
     const end = await resolvePoint(params.endX, params.endY, params.windowId);
     await withSafety<void>({ action: "drag", params: { startX: start.x, startY: start.y, endX: end.x, endY: end.y }, requiresAccessibility: true, execute: () => getPlatform().drag(start.x, start.y, end.x, end.y, params.button, params.duration) });
-    return actionResponse({ dragged: true, startX: start.x, startY: start.y, endX: end.x, endY: end.y }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    return actionResponse("drag", { dragged: true, startX: start.x, startY: start.y, endX: end.x, endY: end.y }, { startX: start.x, startY: start.y, endX: end.x, endY: end.y, windowId: params.windowId }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("drag");
 
@@ -420,7 +533,7 @@ export function registerTools(server: McpServer): void {
   }, async (params) => {
     const pt = await resolvePoint(params.x, params.y, params.windowId);
     await withSafety<void>({ action: "move", params: { x: pt.x, y: pt.y }, requiresAccessibility: true, execute: () => getPlatform().move(pt.x, pt.y) });
-    return actionResponse({ moved: true, x: pt.x, y: pt.y }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    return actionResponse("move", { moved: true, x: pt.x, y: pt.y }, { x: pt.x, y: pt.y, windowId: params.windowId }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("move");
 
@@ -438,7 +551,7 @@ export function registerTools(server: McpServer): void {
     elementId: z.string().describe("AX element identifier"), app: z.string().optional().describe("Target app"), ...captureAfterFields,
   }, async (params) => {
     await withSafety<void>({ action: "click_element", params: {}, requiresAccessibility: true, execute: () => getPlatform().clickElement(params.elementId, params.app) });
-    return actionResponse({ clicked: true, elementId: params.elementId }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    return actionResponse("click_element", { clicked: true, elementId: params.elementId }, { elementId: params.elementId, app: params.app }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("click_element");
 
@@ -446,7 +559,7 @@ export function registerTools(server: McpServer): void {
     elementId: z.string().describe("AX element identifier"), value: z.string().describe("Value to set"), app: z.string().optional().describe("Target app"), ...captureAfterFields,
   }, async (params) => {
     await withSafety<void>({ action: "set_value", params: { value: params.value }, requiresAccessibility: true, execute: () => getPlatform().setElementValue!(params.elementId, params.value, params.app) });
-    return actionResponse({ setValue: true, elementId: params.elementId }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    return actionResponse("set_value", { setValue: true, elementId: params.elementId }, { elementId: params.elementId, app: params.app }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("set_value");
 
@@ -455,7 +568,7 @@ export function registerTools(server: McpServer): void {
     app: z.string().optional().describe("Target app"), clearFirst: z.boolean().optional().describe("Clear existing text before typing"), ...captureAfterFields,
   }, async (params) => {
     await withSafety<void>({ action: "type_in_element", params: { text: params.text }, requiresAccessibility: true, execute: () => getPlatform().typeInElement(params.elementId, params.text, params.app, params.clearFirst) });
-    return actionResponse({ typed: true, elementId: params.elementId, charCount: params.text.length }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    return actionResponse("type_in_element", { typed: true, elementId: params.elementId, charCount: params.text.length }, { elementId: params.elementId, app: params.app }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("type_in_element");
 
