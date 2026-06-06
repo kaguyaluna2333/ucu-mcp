@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.5] - 2026-06-06
+## [0.3.5] - 2026-06-06  *(Yanked — see 0.3.6)*
 
 ### Tests
 
@@ -20,6 +20,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Comment on the JXA `matchesValue` helper no longer claims "JXA function declarations are order-sensitive" (they aren't — JXA hoists them like any ES engine). The comment now correctly notes that the leading placement is for readability. (Herschel review comment Minor)
+
+## [0.3.6] - 2026-06-06
+
+### Re-publish of 0.3.5
+
+0.3.5 was published with a test that didn't account for the McpServer
+schema-validation wrapper. The test called `handler({value:""})`
+directly, which bypasses the schema validation, so the assertion
+`r.isError === true` saw `undefined` instead. The actual fix
+(asserting the zod schema constraint directly) was a one-test rewrite;
+0.3.6 carries the same code as 0.3.5 plus the test fix.
+
+### Yanked
+
+`ucu-mcp@0.3.5` was unpublished (yanked) within minutes of release
+due to the broken test. Users on `@latest` are now on 0.3.6.
 
 ## [0.3.4] - 2026-06-06
 
