@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-06-06
+
+### Bug fixes
+
+- `wait_for_element` `until="value_change"` mode no longer spins until timeout when the matched element's initial `value` is `undefined` (e.g. progress indicators / status text without an AX value). A separate `hasInitial` flag now tracks "first sample captured" so a captured `undefined` is preserved as the baseline. On timeout, `value_change` mode now reports `"never_appeared"` (no match ever found) vs `"value_unchanged"` (match found but value did not change) so the model can branch on the result. (Singer review Major fix)
+
+### Note
+
+Post-0.3.0 release changes already merged on `main` and folded into 0.3.1:
+
+- Scenario-based MCP `instructions` covering forms, menu bar, screen read, app switch, verify action, wait for UI, recover from `TARGET_STALE`, clipboard read/write. (47dbcff)
+- `find_element` multi-strategy: new `value` (textMode-aware), `index` (Nth match), `near` (distance-sorted) selectors. (47dbcff)
+- `wait_for_element` `until` parameter: new modes `appear` (default), `disappear`, `value_change`. (47dbcff)
+- `UcuError` class static `code` renamed to `defaultCode` to avoid clashing with the instance `code` field. (eec7afd)
+
 ## [0.3.0] - 2026-06-06
 
 
