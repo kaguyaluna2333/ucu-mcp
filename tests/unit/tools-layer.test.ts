@@ -194,6 +194,17 @@ describe("active target context", () => {
     expect(mockPlat.findElement).toHaveBeenCalledWith(expect.objectContaining({ app: "Notes" }));
   });
 
+  it("rejects value='' as a schema validation error", async () => {
+    // Regression test for the 0.3.2 commit that tightened find_element's
+    // value schema from z.string().optional() to z.string().min(1).optional().
+    // Without this test, a future refactor that loosens the schema back to
+    // .optional() would silently re-introduce the empty-string-equals-unset
+    // ambiguity. Empty string must surface as a tool error, not be silently
+    // coerced to "no value filter".
+    const r = await tools.get("find_element")!.handler({ value: "", app: "Notes" });
+    expect(r.isError).toBe(true);
+  });
+
   it("uses active target app when app is omitted in click_element", async () => {
     await tools.get("focus_app")!.handler({ app: "Notes" });
     await vi.advanceTimersByTimeAsync(101);
