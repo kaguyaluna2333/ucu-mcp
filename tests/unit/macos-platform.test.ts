@@ -58,6 +58,28 @@ describe("MacOSPlatform", () => {
       .rejects.toBeInstanceOf(PlatformError);
   });
 
+  it("throws PlatformError with Invalid regex message when value is an invalid regex and textMode is regex", async () => {
+    // Regression test for the 0.3.2 commit that mirrored the text-side regex
+    // pre-validation onto the value side. If a future refactor silently
+    // drops the value-side throw, the user-visible regression is "no
+    // results returned" instead of a clear error — this test makes that
+    // impossible to ship unnoticed.
+    const platform = new MacOSPlatform();
+
+    await expect(
+      platform.findElement({ value: "[", app: "Notes", textMode: "regex" }),
+    ).rejects.toBeInstanceOf(PlatformError);
+
+    // The message should mention the invalid pattern so the model can
+    // surface a useful hint rather than a bare class name.
+    try {
+      await platform.findElement({ value: "[", app: "Notes", textMode: "regex" });
+      throw new Error("expected to throw");
+    } catch (err: any) {
+      expect(String(err.message)).toMatch(/Invalid regex pattern/);
+    }
+  });
+
   it("reports stale AX element IDs as ElementNotFoundError", async () => {
     execFileSyncMock.mockReturnValue(JSON.stringify({
       success: false,
@@ -419,6 +441,30 @@ describe("MacOSPlatform", () => {
     const response = await platform.findElement({ role: "AXButton", app: "Notes", near: { x: 0, y: 0 } });
 
     expect(response.results.map(r => r.name)).toEqual(["Near", "Mid", "Far"]);
+  });
+
+  it("pushes elements without bounds to the end of the near-sorted result", async () => {
+    // Regression test for the 0.3.2 commit that added the no-bounds fallback
+    // in the near-sort comparator. Without the fallback, bounds-less
+    // elements are implicitly treated as centered at (0,0), which would
+    // pollute the "closest first" ordering. This test pins the new
+    // behavior so a future refactor can't silently regress it.
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      results: [
+        { id: "Notes/win0/1", role: "AXButton", name: "WithBoundsFar", bounds: { x: 100, y: 100, width: 10, height: 10 } },
+        { id: "Notes/win0/2", role: "AXButton", name: "NoBounds" },
+        { id: "Notes/win0/3", role: "AXButton", name: "WithBoundsNear", bounds: { x: 5, y: 5, width: 5, height: 5 } },
+      ],
+      scannedCount: 3,
+      matchedCount: 3,
+    }));
+    const platform = new MacOSPlatform();
+
+    const response = await platform.findElement({ role: "AXButton", app: "Notes", near: { x: 0, y: 0 } });
+
+    // WithBoundsNear (center 7.5,7.5) closest, then WithBoundsFar (center 105,105),
+    // then NoBounds parked at the end.
+    expect(response.results.map(r => r.name)).toEqual(["WithBoundsNear", "WithBoundsFar", "NoBounds"]);
   });
 });
 
