@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] - 2026-06-06
+
+### Tests
+
+- `macos-platform`: new regression test for the value-field regex pre-validation (`findElement({value:"[", textMode:"regex"})` throws `PlatformError` with an `Invalid regex pattern` message). Pins the 0.3.2 commit `0710eca` behavior change.
+- `macos-platform`: new regression test for the near-sort bounds fallback (elements without `bounds` are pushed to the end of the sorted result, instead of implicitly being centered at (0,0)). Pins the 0.3.2 commit `0710eca` second behavior change.
+- `tools-layer`: new regression test that `find_element({value:""})` returns `isError: true`. Pins the 0.3.2 commit `46d4ddd` schema tightening (`z.string().min(1).optional()`).
+
+### Changed
+
+- JXA `textMatches` regex branch now compiles the `RegExp` once per element instead of once per source (name / value / description) — three fewer compilations per matched element when `textMode="regex"`. The TS-side pre-validation in `findElement` guarantees the pattern is valid, so the `RegExp` constructor cannot throw here. (Herschel review perf Minor)
+
+### Fixed
+
+- Comment on the JXA `matchesValue` helper no longer claims "JXA function declarations are order-sensitive" (they aren't — JXA hoists them like any ES engine). The comment now correctly notes that the leading placement is for readability. (Herschel review comment Minor)
+
 ## [0.3.4] - 2026-06-06
 
 ### Re-publish of 0.3.3
@@ -25,7 +41,7 @@ contents and CHANGELOG entry as 0.3.3 plus this note.
 `ucu-mcp@0.3.3` was unpublished (yanked) shortly after release due to
 the test file compile error. Users on `@latest` are now on 0.3.4.
 
-## [0.3.3] - 2026-06-06
+## [0.3.3] - 2026-06-06  *(Yanked — see 0.3.4)*
 
 ### Tests
 
