@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-06-06
+
+### Bug fixes
+
+- `find_element` with `textMode="regex"` now pre-validates the `value` field for invalid regex patterns and throws `PlatformError`, mirroring the existing `text`-field validation. Before, an invalid value regex was silently swallowed by the JXA-internal `try/catch` and surfaced as "no results" instead of a clear error. (Singer Minor)
+- `find_element` `near` sort now explicitly pushes elements without `bounds` to the end of the sorted result, instead of implicitly treating them as centered at (0,0). Improves semantics for elements without on-screen geometry. (Singer Nit)
+
+### Changed
+
+- `find_element.value` schema is now `z.string().min(1).optional()`. Empty strings are now rejected at the schema layer with a clear validation error rather than being silently coerced to "no filter". (Singer Minor)
+
+### Tests
+
+- `macos-platform`: the `index out of range` test now also pins `metrics.matchedCount` to the JXA return value, locking the semantic that out-of-range indexing does not change the underlying match count. (Singer Minor)
+
+### Tool description
+
+- `find_element` tool description expanded to mention `value` / `index` / `near` selector support, so the model sees the new selectors at the tool level rather than only on individual parameters. (Singer Minor)
+- `UcuError.defaultCode` lookup now has a JSDoc cross-reference explaining the relationship between the static class default and the per-instance `code` field. (Singer Minor)
+
+### Hygiene
+
+- Tracked 7 files removed from git tracking: `.codex/{config.toml,postmortem-interrupt-loop.md}`, `.claude/{settings.json,settings.local.json,.cozempic-init.lock}`, `docs/{.DS_Store,superpowers/.DS_Store}`. These were local-environment residue that predated the `.gitignore` rules; the ignore rules were already in place, just not enforced on the existing tracked entries. `claude-desktop-config.json` (the root-level sample for Claude Desktop MCP setup) was kept.
+
 ## [0.3.1] - 2026-06-06
 
 ### Bug fixes
