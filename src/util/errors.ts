@@ -23,6 +23,8 @@ export class UcuError extends Error {
   ) {
     super(message);
     if (code === undefined) {
+      // The default code applied to instances of this class when no explicit code is passed to the constructor.
+      // See the static `defaultCode` declaration above for the per-class override mechanism.
       code = (this.constructor as typeof UcuError).defaultCode;
     }
     this.name = this.constructor.name;
