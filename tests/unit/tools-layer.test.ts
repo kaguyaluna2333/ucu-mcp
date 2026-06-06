@@ -352,7 +352,7 @@ describe("wait_for_element", () => {
     // comparison is what we care about. The mocked findElement here returns a
     // value matching a "contains" pattern in the underlying JXA, which the
     // wait_for_element response surfaces unchanged. (Singer Minor — test
-    coverage for value+textMode=contains combination)
+    // coverage for value+textMode=contains combination)
     mockPlat.findElement
       .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXStaticText", name: "Status", value: "loading" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } })
       .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXStaticText", name: "Status", value: "loading" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } })
