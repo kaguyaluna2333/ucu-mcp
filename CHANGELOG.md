@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-06-06
+
+### Re-publish of 0.3.3
+
+0.3.3 was published with a syntax error in the source test file
+(`tests/unit/tools-layer.test.ts:355` was a continuation of a `//`
+comment block that lost its `//` prefix on a hard line break, so
+tsc parsed the second line as a bare identifier). The published
+npm tarball was functionally correct (`dist/` was unaffected), but
+the broken test file would fail to compile for any consumer
+running `npm test` against the source. The fix (a single-character
+comment prefix) was applied, but npm disallows re-publishing the
+same version, so the fixed source ships as 0.3.4 with the same
+contents and CHANGELOG entry as 0.3.3 plus this note.
+
+### Yanked
+
+`ucu-mcp@0.3.3` was unpublished (yanked) shortly after release due to
+the test file compile error. Users on `@latest` are now on 0.3.4.
+
 ## [0.3.3] - 2026-06-06
 
 ### Tests
