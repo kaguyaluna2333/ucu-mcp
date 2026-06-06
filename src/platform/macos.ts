@@ -875,6 +875,16 @@ export class MacOSPlatform implements Platform {
         throw new PlatformError(`Invalid regex pattern: ${text}`);
       }
     }
+    // Same pre-validation for value field when regex textMode is requested;
+    // otherwise JXA's valueMatches silently returns false on invalid regex,
+    // which surfaces as "no results" instead of a clear error.
+    if (value && textMode === "regex") {
+      try {
+        new RegExp(value);
+      } catch {
+        throw new PlatformError(`Invalid regex pattern: ${value}`);
+      }
+    }
 
     const startTime = Date.now();
 
@@ -1083,6 +1093,14 @@ export class MacOSPlatform implements Platform {
         const nx = options.near.x;
         const ny = options.near.y;
         finalResults = [...finalResults].sort((a, b) => {
+          // Elements without bounds cannot be meaningfully compared against
+          // a near point. Push them to the end of the sorted result so they
+          // don't pollute the "closest first" ordering. (Singer Nit)
+          const aHasBounds = !!a.bounds;
+          const bHasBounds = !!b.bounds;
+          if (!aHasBounds && !bHasBounds) return 0;
+          if (!aHasBounds) return 1;
+          if (!bHasBounds) return -1;
           const acx = (a.bounds?.x ?? 0) + (a.bounds?.width ?? 0) / 2;
           const acy = (a.bounds?.y ?? 0) + (a.bounds?.height ?? 0) / 2;
           const bcx = (b.bounds?.x ?? 0) + (b.bounds?.width ?? 0) / 2;
