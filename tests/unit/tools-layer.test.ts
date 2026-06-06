@@ -347,6 +347,53 @@ describe("wait_for_element", () => {
     expect(d.reason).toBe("never_appeared");
   });
 
+  it("propagates value_filter behavior for contains mode (findElement textMode=contains)", async () => {
+    // wait_for_element delegates to findElement. With value_change, the value
+    // comparison is what we care about. The mocked findElement here returns a
+    // value matching a "contains" pattern in the underlying JXA, which the
+    // wait_for_element response surfaces unchanged. (Singer Minor — test
+    coverage for value+textMode=contains combination)
+    mockPlat.findElement
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXStaticText", name: "Status", value: "loading" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } })
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXStaticText", name: "Status", value: "loading" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } })
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXStaticText", name: "Status", value: "loaded" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } });
+    const p = tools.get("wait_for_element")!.handler({ text: "Status", until: "value_change", timeout: 1000, interval: 100 });
+    await vi.advanceTimersByTimeAsync(500);
+    const r = await p;
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.found).toBe(true);
+    expect(d.oldValue).toBe("loading");
+    expect(d.newValue).toBe("loaded");
+  });
+
+  it("propagates value_filter behavior for exact mode (findElement textMode=exact)", async () => {
+    // Exact-match: a single value matches the JXA valueFilter. Wait_for_element
+    // surfaces the matched value verbatim. (Singer Minor — test coverage for
+    // value+textMode=exact combination)
+    mockPlat.findElement.mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXStaticText", name: "Status", value: "Ready" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } });
+    const r = await tools.get("wait_for_element")!.handler({ text: "Status", until: "appear", timeout: 1000, interval: 100 });
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.found).toBe(true);
+    expect(d.element.value).toBe("Ready");
+  });
+
+  it("propagates value_filter behavior for regex mode (findElement textMode=regex)", async () => {
+    // Regex-match: JXA valueMatches compiled the valueFilter as a regex. The
+    // mocked findElement returns an element whose value is a pattern match.
+    // (Singer Minor — test coverage for value+textMode=regex combination)
+    mockPlat.findElement
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXStaticText", name: "Status", value: "idle" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } })
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXStaticText", name: "Status", value: "idle" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } })
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXStaticText", name: "Status", value: "running" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } });
+    const p = tools.get("wait_for_element")!.handler({ text: "Status", until: "value_change", timeout: 1000, interval: 100 });
+    await vi.advanceTimersByTimeAsync(500);
+    const r = await p;
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.found).toBe(true);
+    expect(d.oldValue).toBe("idle");
+    expect(d.newValue).toBe("running");
+  });
+
   it("defaults until to 'appear' when omitted (backward compatible)", async () => {
     const r = await tools.get("wait_for_element")!.handler({ text: "Save", timeout: 1000, interval: 100 });
     const d = JSON.parse(r.content[0].text!);
