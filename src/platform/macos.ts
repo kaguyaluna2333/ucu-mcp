@@ -919,45 +919,37 @@ export class MacOSPlatform implements Platform {
         }
       }
 
-      function textMatches(elemName, elemValue, elemDesc) {
-        if (textFilter === null) return true;
-        var sources = [elemName, elemValue, elemDesc];
-        if (textMode === "exact") {
-          var t = textFilter.toLowerCase();
-          for (var i = 0; i < sources.length; i++) {
-            if (sources[i].toLowerCase() === t) return true;
-          }
-          return false;
-        } else if (textMode === "regex") {
+      // Shared filter helper. textMatches and valueMatches used to be near
+      // copies of the same three-branch dispatch (contains / exact / regex);
+      // this consolidates the logic so the two callers only differ in which
+      // sources they iterate. Declared before textMatches/valueMatches
+      // because JXA function declarations are order-sensitive within a
+      // script. (Singer Nit)
+      function matchesValue(filter, value, mode) {
+        if (filter === null) return true;
+        if (mode === "exact") {
+          return value.toLowerCase() === filter.toLowerCase();
+        } else if (mode === "regex") {
           try {
-            var re = new RegExp(textFilter, "i");
-            for (var i = 0; i < sources.length; i++) {
-              if (re.test(sources[i])) return true;
-            }
-          } catch(e) {}
-          return false;
-        } else {
-          // contains (default)
-          var t = textFilter.toLowerCase();
-          for (var i = 0; i < sources.length; i++) {
-            if (sources[i].toLowerCase().indexOf(t) !== -1) return true;
-          }
-          return false;
-        }
-      }
-
-      function valueMatches(elemValue) {
-        if (valueFilter === null) return true;
-        if (textMode === "exact") {
-          return elemValue.toLowerCase() === valueFilter.toLowerCase();
-        } else if (textMode === "regex") {
-          try {
-            return new RegExp(valueFilter, "i").test(elemValue);
+            return new RegExp(filter, "i").test(value);
           } catch(e) { return false; }
         } else {
           // contains (default)
-          return elemValue.toLowerCase().indexOf(valueFilter.toLowerCase()) !== -1;
+          return value.toLowerCase().indexOf(filter.toLowerCase()) !== -1;
         }
+      }
+
+      function textMatches(elemName, elemValue, elemDesc) {
+        if (textFilter === null) return true;
+        var sources = [elemName, elemValue, elemDesc];
+        for (var i = 0; i < sources.length; i++) {
+          if (matchesValue(textFilter, sources[i], textMode)) return true;
+        }
+        return false;
+      }
+
+      function valueMatches(elemValue) {
+        return matchesValue(valueFilter, elemValue, textMode);
       }
 
       function matches(elem) {
