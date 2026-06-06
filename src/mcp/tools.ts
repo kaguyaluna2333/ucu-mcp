@@ -654,7 +654,7 @@ export function registerTools(server: McpServer): void {
     depth: z.number().optional().describe("AX tree depth"), includeBounds: z.boolean().default(true).describe("Include bounds"), maxResults: z.number().min(1).max(200).default(50).describe("Max results"),
     textMode: z.enum(["contains", "exact", "regex"]).default("contains").describe("Text matching mode: contains (default), exact, or regex"),
     visibleOnly: z.boolean().default(false).describe("Only return elements with valid on-screen bounds"),
-    value: z.string().optional().describe("Filter by AX element value (respects textMode)"),
+    value: z.string().min(1).optional().describe("Filter by AX element value (text/regex/exact, see textMode). Empty string is treated as unset (omit the field instead)."),
     index: z.number().int().nonnegative().optional().describe("Return only the Nth match (0-based) after all other filtering and sorting"),
     near: z.object({ x: z.number(), y: z.number() }).optional().describe("Sort results by ascending distance to this point and return closest first"),
   }, async (params) => {
