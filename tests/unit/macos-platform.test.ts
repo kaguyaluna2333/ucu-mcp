@@ -401,6 +401,7 @@ describe("MacOSPlatform", () => {
     const response = await platform.findElement({ role: "AXButton", app: "Notes", index: 5 });
 
     expect(response.results).toEqual([]);
+    expect(response.metrics.matchedCount).toBe(1);
   });
 
   it("sorts results by proximity to near point and returns closest first", async () => {
