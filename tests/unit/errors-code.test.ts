@@ -19,7 +19,7 @@ describe("UcuError code field", () => {
   });
 
   it("base UcuError exposes class-level static code UCU_ERROR", () => {
-    expect(UcuError.code).toBe("UCU_ERROR");
+    expect(UcuError.defaultCode).toBe("UCU_ERROR");
   });
 
   it("accepts explicit code override on base", () => {
@@ -74,7 +74,7 @@ describe("subclass codes (defaults and overrides)", () => {
     });
 
     it(`${Ctor.name} has class-level static code ${expectedCode}`, () => {
-      expect((Ctor as any).code).toBe(expectedCode);
+      expect((Ctor as any).defaultCode).toBe(expectedCode);
     });
   }
 

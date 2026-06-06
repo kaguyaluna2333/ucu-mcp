@@ -12,7 +12,7 @@
 
 export class UcuError extends Error {
   /** Default error code for this class. Subclasses override. */
-  static readonly code: string = "UCU_ERROR";
+  static readonly defaultCode: string = "UCU_ERROR";
   readonly code: string;
   readonly retryable: boolean;
 
@@ -23,7 +23,7 @@ export class UcuError extends Error {
   ) {
     super(message);
     if (code === undefined) {
-      code = (this.constructor as typeof UcuError).code;
+      code = (this.constructor as typeof UcuError).defaultCode;
     }
     this.name = this.constructor.name;
     this.code = code;
@@ -49,9 +49,9 @@ export class UcuError extends Error {
  * Native API call failed (permissions, OS error, timeout).
  */
 export class PlatformError extends UcuError {
-  static override readonly code = "PLATFORM_ERROR";
+  static override readonly defaultCode = "PLATFORM_ERROR";
   constructor(message: string, retryable: boolean = true) {
-    super(message, PlatformError.code, retryable);
+    super(message, PlatformError.defaultCode, retryable);
   }
 }
 
@@ -63,9 +63,9 @@ export class PlatformError extends UcuError {
  * Action blocked by safety guard.
  */
 export class SafetyError extends UcuError {
-  static override readonly code = "SAFETY_BLOCKED";
+  static override readonly defaultCode = "SAFETY_BLOCKED";
   constructor(message: string) {
-    super(message, SafetyError.code, false);
+    super(message, SafetyError.defaultCode, false);
   }
 }
 
@@ -77,9 +77,9 @@ export class SafetyError extends UcuError {
  * Missing OS accessibility/screen-recording permissions.
  */
 export class PermissionError extends UcuError {
-  static override readonly code = "PERMISSION_DENIED";
+  static override readonly defaultCode = "PERMISSION_DENIED";
   constructor(permission: string, platform: string) {
-    super(getPermissionMessage(permission, platform), PermissionError.code, false);
+    super(getPermissionMessage(permission, platform), PermissionError.defaultCode, false);
   }
 }
 
@@ -98,11 +98,11 @@ function getPermissionMessage(permission: string, platform: string): string {
  * Requested window ID no longer exists.
  */
 export class WindowNotFoundError extends UcuError {
-  static override readonly code = "WINDOW_NOT_FOUND";
+  static override readonly defaultCode = "WINDOW_NOT_FOUND";
   constructor(windowId: string) {
     super(
       `Window ${windowId} not found. It may have been closed. Run list_windows to get fresh IDs.`,
-      WindowNotFoundError.code,
+      WindowNotFoundError.defaultCode,
       false,
     );
   }
@@ -112,11 +112,11 @@ export class WindowNotFoundError extends UcuError {
  * Active target window is no longer available.
  */
 export class TargetStaleError extends UcuError {
-  static override readonly code = "TARGET_STALE";
+  static override readonly defaultCode = "TARGET_STALE";
   constructor(windowId: string) {
     super(
       `Active target window ${windowId} is no longer available. Run focus_app or list_windows to refresh.`,
-      TargetStaleError.code,
+      TargetStaleError.defaultCode,
       false,
     );
   }
@@ -126,11 +126,11 @@ export class TargetStaleError extends UcuError {
  * Requested accessibility element ID no longer resolves.
  */
 export class ElementNotFoundError extends UcuError {
-  static override readonly code = "ELEMENT_NOT_FOUND";
+  static override readonly defaultCode = "ELEMENT_NOT_FOUND";
   constructor(elementId: string) {
     super(
       `Element ${elementId} not found. It may have been removed or invalidated. Run find_element to get a fresh ID.`,
-      ElementNotFoundError.code,
+      ElementNotFoundError.defaultCode,
       false,
     );
   }
@@ -144,11 +144,11 @@ export class ElementNotFoundError extends UcuError {
  * Click/scroll target is outside screen bounds.
  */
 export class CoordinateError extends UcuError {
-  static override readonly code = "COORDINATE_OUT_OF_BOUNDS";
+  static override readonly defaultCode = "COORDINATE_OUT_OF_BOUNDS";
   constructor(x: number, y: number, bounds: { width: number; height: number }) {
     super(
       `Coordinate (${x}, ${y}) is outside screen bounds (0-${bounds.width}, 0-${bounds.height}).`,
-      CoordinateError.code,
+      CoordinateError.defaultCode,
       false,
     );
   }
@@ -158,9 +158,9 @@ export class CoordinateError extends UcuError {
  * Keystroke or mouse event injection failed.
  */
 export class InputSynthesisError extends UcuError {
-  static override readonly code = "INPUT_FAILED";
+  static override readonly defaultCode = "INPUT_FAILED";
   constructor(message: string) {
-    super(message, InputSynthesisError.code, true);
+    super(message, InputSynthesisError.defaultCode, true);
   }
 }
 
@@ -169,9 +169,9 @@ export class InputSynthesisError extends UcuError {
  * implementation does not support.
  */
 export class UnsupportedParameterError extends UcuError {
-  static override readonly code = "UNSUPPORTED_PARAMETER";
+  static override readonly defaultCode = "UNSUPPORTED_PARAMETER";
   constructor(message: string) {
-    super(message, UnsupportedParameterError.code, false);
+    super(message, UnsupportedParameterError.defaultCode, false);
   }
 }
 
@@ -183,8 +183,8 @@ export class UnsupportedParameterError extends UcuError {
  * Screenshot or window-state capture failed.
  */
 export class CaptureError extends UcuError {
-  static override readonly code = "CAPTURE_FAILED";
+  static override readonly defaultCode = "CAPTURE_FAILED";
   constructor(message: string) {
-    super(message, CaptureError.code, true);
+    super(message, CaptureError.defaultCode, true);
   }
 }
