@@ -922,9 +922,9 @@ export class MacOSPlatform implements Platform {
       // Shared filter helper. textMatches and valueMatches used to be near
       // copies of the same three-branch dispatch (contains / exact / regex);
       // this consolidates the logic so the two callers only differ in which
-      // sources they iterate. Declared before textMatches/valueMatches
-      // because JXA function declarations are order-sensitive within a
-      // script. (Singer Nit)
+      // sources they iterate. Declared before textMatches/valueMatches for
+      // readability — JXA's function declarations are hoisted, so order
+      // doesn't affect callability. (Singer Nit + Herschel comment fix)
       function matchesValue(filter, value, mode) {
         if (filter === null) return true;
         if (mode === "exact") {
@@ -942,8 +942,18 @@ export class MacOSPlatform implements Platform {
       function textMatches(elemName, elemValue, elemDesc) {
         if (textFilter === null) return true;
         var sources = [elemName, elemValue, elemDesc];
-        for (var i = 0; i < sources.length; i++) {
-          if (matchesValue(textFilter, sources[i], textMode)) return true;
+        // Hoist regex compilation out of the loop. The TS-side pre-validation
+        // in findElement guarantees the pattern is valid, so the RegExp
+        // constructor cannot throw here. (Herschel perf Minor)
+        if (textMode === "regex") {
+          var reText = new RegExp(textFilter, "i");
+          for (var i = 0; i < sources.length; i++) {
+            if (reText.test(sources[i])) return true;
+          }
+          return false;
+        }
+        for (var j = 0; j < sources.length; j++) {
+          if (matchesValue(textFilter, sources[j], textMode)) return true;
         }
         return false;
       }
