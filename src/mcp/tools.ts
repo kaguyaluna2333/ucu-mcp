@@ -649,7 +649,7 @@ export function registerTools(server: McpServer): void {
   });
   registry.register("move");
 
-  registerTool("find_element", "Find accessibility elements by text, role, or app", {
+  registerTool("find_element", "Find accessibility elements by text, role, or value. Supports value/index/near selectors.", {
     text: z.string().optional().describe("Text to search"), role: z.string().optional().describe("AX role"), app: z.string().optional().describe("Target app"),
     depth: z.number().optional().describe("AX tree depth"), includeBounds: z.boolean().default(true).describe("Include bounds"), maxResults: z.number().min(1).max(200).default(50).describe("Max results"),
     textMode: z.enum(["contains", "exact", "regex"]).default("contains").describe("Text matching mode: contains (default), exact, or regex"),
