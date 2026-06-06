@@ -586,6 +586,7 @@ export function registerTools(server: McpServer): void {
     const { granted } = await checkPermission("accessibility");
     if (!granted) throw new PermissionError("accessibility", process.platform);
     let initialValue: string | undefined;
+    let hasInitial = false;
     while (Date.now() < deadline) {
       const response = await getPlatform().findElement(query);
       const matched = response.results[0];
@@ -594,10 +595,15 @@ export function registerTools(server: McpServer): void {
       } else if (until === "disappear") {
         if (!matched) return { content: [{ type: "text", text: JSON.stringify({ found: true, reason: "disappeared" }, null, 2) }] };
       } else {
-        // value_change: capture the initial value of the first match, then wait for it to differ
+        // value_change: capture the initial value of the first match, then wait for it to differ.
+        // A separate `hasInitial` flag is required because the first match's `value` may itself be
+        // undefined; using `initialValue === undefined` to mean "not yet captured" would loop
+        // forever in that case. On timeout, distinguish "element never appeared" from "value stayed
+        // the same" so the model can branch on the result.
         if (matched) {
-          if (initialValue === undefined) {
+          if (!hasInitial) {
             initialValue = matched.value;
+            hasInitial = true;
           } else if (matched.value !== initialValue) {
             return { content: [{ type: "text", text: JSON.stringify({ found: true, oldValue: initialValue, newValue: matched.value }, null, 2) }] };
           }
@@ -605,7 +611,8 @@ export function registerTools(server: McpServer): void {
       }
       await new Promise(r => setTimeout(r, interval));
     }
-    return { content: [{ type: "text", text: JSON.stringify({ found: false, reason: "timeout" }, null, 2) }] };
+    const reason = until === "value_change" ? (hasInitial ? "value_unchanged" : "never_appeared") : "timeout";
+    return { content: [{ type: "text", text: JSON.stringify({ found: false, reason }, null, 2) }] };
   });
   registry.register("wait_for_element");
 

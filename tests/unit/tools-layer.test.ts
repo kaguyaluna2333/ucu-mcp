@@ -314,7 +314,37 @@ describe("wait_for_element", () => {
     const r = await p;
     const d = JSON.parse(r.content[0].text!);
     expect(d.found).toBe(false);
-    expect(d.reason).toBe("timeout");
+    expect(d.reason).toBe("value_unchanged");
+  });
+
+  it("supports until='value_change' and still detects change when initial value is undefined (Singer Major fix)", async () => {
+    // First two polls: element present with no AX value (undefined). Third poll: value becomes "running".
+    // Before the fix, `initialValue === undefined` was used as a "not yet captured" sentinel, so the
+    // first poll would lock the initial value at undefined and subsequent `matched.value !== undefined`
+    // comparisons would resolve immediately on the very first poll after capture, returning a bogus
+    // change. The fix introduces a separate `hasInitial` flag so the undefined initial value is
+    // captured correctly and the change is detected.
+    mockPlat.findElement
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXProgressIndicator", name: "Status" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } })
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXProgressIndicator", name: "Status" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } })
+      .mockResolvedValueOnce({ results: [{ id: "N/w0/1", role: "AXProgressIndicator", name: "Status", value: "running" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 1, truncated: false } });
+    const p = tools.get("wait_for_element")!.handler({ text: "Status", until: "value_change", timeout: 1000, interval: 100 });
+    await vi.advanceTimersByTimeAsync(500);
+    const r = await p;
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.found).toBe(true);
+    expect(d.oldValue).toBeUndefined();
+    expect(d.newValue).toBe("running");
+  });
+
+  it("supports until='value_change' and reports 'never_appeared' when no element ever matches", async () => {
+    mockPlat.findElement.mockResolvedValue({ results: [], metrics: { scannedCount: 0, matchedCount: 0, durationMs: 1, truncated: false } });
+    const p = tools.get("wait_for_element")!.handler({ text: "Status", until: "value_change", timeout: 200, interval: 50 });
+    await vi.advanceTimersByTimeAsync(300);
+    const r = await p;
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.found).toBe(false);
+    expect(d.reason).toBe("never_appeared");
   });
 
   it("defaults until to 'appear' when omitted (backward compatible)", async () => {
