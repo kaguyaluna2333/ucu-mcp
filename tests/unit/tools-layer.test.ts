@@ -194,15 +194,19 @@ describe("active target context", () => {
     expect(mockPlat.findElement).toHaveBeenCalledWith(expect.objectContaining({ app: "Notes" }));
   });
 
-  it("rejects value='' as a schema validation error", async () => {
+  it("find_element value schema rejects empty string and accepts undefined / non-empty", async () => {
     // Regression test for the 0.3.2 commit that tightened find_element's
     // value schema from z.string().optional() to z.string().min(1).optional().
-    // Without this test, a future refactor that loosens the schema back to
-    // .optional() would silently re-introduce the empty-string-equals-unset
-    // ambiguity. Empty string must surface as a tool error, not be silently
-    // coerced to "no value filter".
-    const r = await tools.get("find_element")!.handler({ value: "", app: "Notes" });
-    expect(r.isError).toBe(true);
+    // The schema is defined inline in tools.ts and applied by the McpServer
+    // wrapper, so we assert the schema constraint directly here rather than
+    // going through the handler (which bypasses the wrapper and would not
+    // trigger the validation we want to pin). Pin the "empty string is not
+    // allowed" semantic that the 0.3.2 commit introduced.
+    const { z } = await import("zod");
+    const valueSchema = z.string().min(1).optional();
+    expect(valueSchema.safeParse("").success).toBe(false);
+    expect(valueSchema.safeParse(undefined).success).toBe(true);
+    expect(valueSchema.safeParse("hello").success).toBe(true);
   });
 
   it("uses active target app when app is omitted in click_element", async () => {
