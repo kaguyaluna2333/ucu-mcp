@@ -66,17 +66,30 @@ describe("MacOSPlatform", () => {
     // impossible to ship unnoticed.
     const platform = new MacOSPlatform();
 
-    await expect(
-      platform.findElement({ value: "[", app: "Notes", textMode: "regex" }),
-    ).rejects.toBeInstanceOf(PlatformError);
-
-    // The message should mention the invalid pattern so the model can
-    // surface a useful hint rather than a bare class name.
     try {
       await platform.findElement({ value: "[", app: "Notes", textMode: "regex" });
       throw new Error("expected to throw");
     } catch (err: any) {
-      expect(String(err.message)).toMatch(/Invalid regex pattern/);
+      expect(err).toBeInstanceOf(PlatformError);
+      expect(String(err.message)).toMatch(/^Invalid regex pattern:/);
+    }
+  });
+
+  it("throws PlatformError with Invalid regex message when text is an invalid regex and textMode is regex", async () => {
+    // Mirror of the value-side test above, pinning that the text-side
+    // regex pre-validation also throws PlatformError with a clear
+    // "Invalid regex pattern" message. The value-side test was added
+    // in 0.3.2, but the text-side guard was the original behavior
+    // that the 0.3.2 commit mirrored; this test makes sure the
+    // original behavior cannot silently regress either. (0.3.7)
+    const platform = new MacOSPlatform();
+
+    try {
+      await platform.findElement({ text: "[", app: "Notes", textMode: "regex" });
+      throw new Error("expected to throw");
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(PlatformError);
+      expect(String(err.message)).toMatch(/^Invalid regex pattern:/);
     }
   });
 
@@ -465,6 +478,31 @@ describe("MacOSPlatform", () => {
     // WithBoundsNear (center 7.5,7.5) closest, then WithBoundsFar (center 105,105),
     // then NoBounds parked at the end.
     expect(response.results.map(r => r.name)).toEqual(["WithBoundsNear", "WithBoundsFar", "NoBounds"]);
+  });
+
+  it("keeps all-no-bounds elements in their original order in the near-sorted result", async () => {
+    // Regression test for the all-no-bounds edge case of the 0.3.2
+    // near-sort bounds fallback. When every result is missing bounds,
+    // the comparator must treat all entries as equal under the
+    // "park to end" branch and preserve the original JXA order
+    // (Array.prototype.sort is stable in modern V8). Pinning this
+    // prevents a future refactor from accidentally introducing a
+    // non-stable comparator that scrambles all-no-bounds results.
+    // (0.3.7)
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      results: [
+        { id: "Notes/win0/1", role: "AXButton", name: "NoBounds1" },
+        { id: "Notes/win0/2", role: "AXButton", name: "NoBounds2" },
+        { id: "Notes/win0/3", role: "AXButton", name: "NoBounds3" },
+      ],
+      scannedCount: 3,
+      matchedCount: 3,
+    }));
+    const platform = new MacOSPlatform();
+
+    const response = await platform.findElement({ role: "AXButton", app: "Notes", near: { x: 0, y: 0 } });
+
+    expect(response.results.map(r => r.name)).toEqual(["NoBounds1", "NoBounds2", "NoBounds3"]);
   });
 });
 

@@ -197,13 +197,15 @@ describe("active target context", () => {
   it("find_element value schema rejects empty string and accepts undefined / non-empty", async () => {
     // Regression test for the 0.3.2 commit that tightened find_element's
     // value schema from z.string().optional() to z.string().min(1).optional().
-    // The schema is defined inline in tools.ts and applied by the McpServer
-    // wrapper, so we assert the schema constraint directly here rather than
-    // going through the handler (which bypasses the wrapper and would not
-    // trigger the validation we want to pin). Pin the "empty string is not
-    // allowed" semantic that the 0.3.2 commit introduced.
-    const { z } = await import("zod");
-    const valueSchema = z.string().min(1).optional();
+    // The schema is exported as findElementInputSchema from tools.ts and
+    // applied by the McpServer wrapper, so we assert the schema constraint
+    // directly here rather than going through the handler (which bypasses
+    // the wrapper and would not trigger the validation we want to pin).
+    // Pin the "empty string is not allowed" semantic that the 0.3.2 commit
+    // introduced. (0.3.7: replaced local tautology schema with the real
+    // exported one so this test actually exercises the production schema.)
+    const { findElementInputSchema } = await import("../../src/mcp/tools.js");
+    const valueSchema = findElementInputSchema.value;
     expect(valueSchema.safeParse("").success).toBe(false);
     expect(valueSchema.safeParse(undefined).success).toBe(true);
     expect(valueSchema.safeParse("hello").success).toBe(true);

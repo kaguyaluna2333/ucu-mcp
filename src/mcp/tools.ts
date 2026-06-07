@@ -47,6 +47,25 @@ const captureAfterFields = {
   captureFormat: z.enum(["png", "jpeg"]).default("jpeg").describe("Format for the post-action screenshot"),
 };
 
+// Exported so unit tests can pin the schema constraint directly instead
+// of going through the McpServer wrapper (which `handler()` calls
+// bypass). (Herschel review Major: 0.3.5's value='' test was a
+// tautology because it re-created a local zod schema instead of
+// asserting against this one.)
+export const findElementInputSchema = {
+  text: z.string().optional().describe("Text to search"),
+  role: z.string().optional().describe("AX role"),
+  app: z.string().optional().describe("Target app"),
+  depth: z.number().optional().describe("AX tree depth"),
+  includeBounds: z.boolean().default(true).describe("Include bounds"),
+  maxResults: z.number().min(1).max(200).default(50).describe("Max results"),
+  textMode: z.enum(["contains", "exact", "regex"]).default("contains").describe("Text matching mode: contains (default), exact, or regex"),
+  visibleOnly: z.boolean().default(false).describe("Only return elements with valid on-screen bounds"),
+  value: z.string().min(1).optional().describe("Filter by AX element value (text/regex/exact, see textMode). Empty string is treated as unset (omit the field instead)."),
+  index: z.number().int().nonnegative().optional().describe("Return only the Nth match (0-based) after all other filtering and sorting"),
+  near: z.object({ x: z.number(), y: z.number() }).optional().describe("Sort results by ascending distance to this point and return closest first"),
+};
+
 async function resolvePoint(x: number, y: number, windowId?: string): Promise<{ x: number; y: number }> {
   if (!windowId) return { x, y };
   const win = (await getPlatform().listWindows()).find(w => w.id === windowId);
@@ -649,15 +668,7 @@ export function registerTools(server: McpServer): void {
   });
   registry.register("move");
 
-  registerTool("find_element", "Find accessibility elements by text, role, or value. Supports value/index/near selectors.", {
-    text: z.string().optional().describe("Text to search"), role: z.string().optional().describe("AX role"), app: z.string().optional().describe("Target app"),
-    depth: z.number().optional().describe("AX tree depth"), includeBounds: z.boolean().default(true).describe("Include bounds"), maxResults: z.number().min(1).max(200).default(50).describe("Max results"),
-    textMode: z.enum(["contains", "exact", "regex"]).default("contains").describe("Text matching mode: contains (default), exact, or regex"),
-    visibleOnly: z.boolean().default(false).describe("Only return elements with valid on-screen bounds"),
-    value: z.string().min(1).optional().describe("Filter by AX element value (text/regex/exact, see textMode). Empty string is treated as unset (omit the field instead)."),
-    index: z.number().int().nonnegative().optional().describe("Return only the Nth match (0-based) after all other filtering and sorting"),
-    near: z.object({ x: z.number(), y: z.number() }).optional().describe("Sort results by ascending distance to this point and return closest first"),
-  }, async (params) => {
+  registerTool("find_element", "Find accessibility elements by text, role, or value. Supports value/index/near selectors.", findElementInputSchema, async (params) => {
     const effectiveApp = params.app || getActiveTarget()?.appName;
     const response = await withSafety<FindElementResponse>({ action: "find_element", params: {}, requiresAccessibility: true,
       execute: () => getPlatform().findElement({ text: params.text, role: params.role, app: effectiveApp, depth: params.depth, includeBounds: params.includeBounds, maxResults: params.maxResults, textMode: params.textMode, visibleOnly: params.visibleOnly, value: params.value, index: params.index, near: params.near }) });

@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.7] - 2026-06-07
+
+### Fixed
+
+- `find_element` value-schema test is no longer a tautology. The 0.3.6 release fixed a *symptom* of the bug (the old test called `handler()` directly, bypassing the McpServer schema-validation wrapper, and then asserted `r.isError === true` which was `undefined`); the underlying tautology remained: the test re-created a local `z.string().min(1).optional()` instead of exercising the real schema. 0.3.7 exports the actual `findElementInputSchema` from `src/mcp/tools.ts` and the test now imports it via `findElementInputSchema.value`, so the assertion genuinely pins the production schema. Pins the 0.3.2 commit `46d4ddd` semantic.
+- CHANGELOG/JXA `textMatches` comment math is now correct: 3 sources → 1 RegExp = **2 fewer** compilations per matched element. The 0.3.5/0.3.6 wording "three fewer" was off by one and has been corrected in both `src/platform/macos.ts` and this CHANGELOG.
+
+### Tests
+
+- `macos-platform`: text-side regex pre-validation now has a regression test mirroring the existing value-side test (`findElement({text:"[", textMode:"regex"})` throws `PlatformError` with an `Invalid regex pattern` message). Pins the original text-side guard that the 0.3.2 commit mirrored onto the value side.
+- `macos-platform`: all-no-bounds edge case for the `near` sort — when every result is missing `bounds`, the original JXA order is preserved. Pins the 0.3.2 commit `0710eca` no-bounds fallback against a future refactor that introduces a non-stable comparator.
+
+### Hygiene
+
+- `findElementInputSchema` is now a named export from `src/mcp/tools.ts` (with a JSDoc comment explaining why the schema is exported) so the unit test can assert the production schema directly instead of constructing a local copy.
+- Added `prepublishOnly` script to `package.json` that runs `npm test && npm run build` before `npm publish`. This is a structural guard against the yank rhythm that hit 0.3.3 and 0.3.5: a failed test or build will now block the publish at the npm level, not at the human level. (Raman review Minor #3)
+
 ## [0.3.5] - 2026-06-06  *(Yanked — see 0.3.6)*
 
 ### Tests
@@ -16,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - JXA `textMatches` regex branch now compiles the `RegExp` once per element instead of once per source (name / value / description) — three fewer compilations per matched element when `textMode="regex"`. The TS-side pre-validation in `findElement` guarantees the pattern is valid, so the `RegExp` constructor cannot throw here. (Herschel review perf Minor)
+- JXA `textMatches` regex branch now compiles the `RegExp` once per element instead of once per source (name / value / description) — **two** fewer compilations per matched element when `textMode="regex"` (corrected in 0.3.7; 0.3.5/0.3.6 said "three fewer" which was off by one: 3 sources → 1 regex = 2 saved). The TS-side pre-validation in `findElement` guarantees the pattern is valid, so the `RegExp` constructor cannot throw here. (Herschel review perf Minor)
 
 ### Fixed
 
