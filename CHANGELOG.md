@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.8] - 2026-06-08
+
+### Fixed
+
+- `focus_app` no longer trips the user-activity pause. It used to be classified as `"other"` (neither observe nor input) so a recent mouse movement could block `focus_app` for 2 s; it is now in `OBSERVE_ACTIONS`, matching the production `withSafety` default. Symptom: OpenCode could not switch the active target app (e.g. CC Switch) without retrying until the cursor had been still for 2 s.
+- `doctor` native-helper path resolution now checks `process.argv[1]` (npm / npx / global install), walks `import.meta.url` up to 4 levels, and falls back to `npm root -g`. Previously, when the MCP client launched `ucu-mcp` from a cwd other than the project root (the common case for `npx ucu-mcp`), the helper binaries would report as missing even though they were in the tarball. The new report includes `path` and a `tried[]` list so the model can see what was checked.
+- `doctor` recommendations now list each missing macOS permission on its own line, name the host terminal app (so the user knows which entry to grant in System Settings), and add an Electron AX hint for the common case where `list_windows` returns `[]` even with Accessibility granted.
+
+### Tests
+
+- `safety-guard`: `focus_app` is in `OBSERVE_ACTIONS`; `classifyAction("focus_app") === "observe"`; `withSafety`'s default `skipUserActivityPause` lets the call through even mid user-activity.
+- `errors`: `WindowNotFoundError` preserves an inline `hint` field set by the platform layer, surfaced in the MCP error response.
+- `macos-platform`: OCR JXA `"Failed to load screenshot image"` is re-thrown as `CaptureError` with a hint pointing at the missing Screen Recording permission (the typical cause is `screencapture` writing a 0-byte file when TCC denies Screen Recording, not the helper binary being absent).
+- `tools-layer`: `doctor` report carries `terminalApp` and the richer `nativeHelpers = { cgevent, ocr } = { ok, path, tried[] }` shape.
+
 ## [0.3.7] - 2026-06-07
 
 ### Fixed

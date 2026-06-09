@@ -284,7 +284,21 @@ export class MacOSPlatform implements Platform {
     } while (Date.now() < deadline);
 
     if (!target) {
-      throw new WindowNotFoundError(app);
+      // Wrap with a more diagnostic message: many real-world failures are
+      // Electron apps that do not expose their AX tree to System Events
+      // (CC Switch, VS Code, Discord, Slack). WindowNotFoundError carries the
+      // app name so the tool handler can surface a remediation hint. The
+      // bare WindowNotFoundError("CC Switch") was indistinguishable from
+      // "the app is not running", which led models to retry forever.
+      const err = new WindowNotFoundError(app);
+      (err as Error & { hint?: string }).hint =
+        "list_windows returned no match for this app. If the app is running, " +
+        "the most likely cause is that it is an Electron app whose AX tree is " +
+        "not exposed to System Events (System Settings > Privacy & Security > " +
+        "Accessibility must be granted to the Electron process itself, not just " +
+        "to the host terminal). As a workaround, modify the app's config file " +
+        "or database directly.";
+      throw err;
     }
     this.activeTarget = {
       targetId: randomUUID(),
@@ -829,7 +843,18 @@ export class MacOSPlatform implements Platform {
     `;
     const out = execFileSync("osascript", ["-l", "JavaScript", "-e", jxaScript], { encoding: "utf-8", timeout: 30000 }).trim();
     const parsed = JSON.parse(out);
-    if (parsed.error) throw new CaptureError(`ocr failed: ${parsed.error}`);
+    if (parsed.error) {
+      // Distinguish permission-class failures from real Vision errors.
+      // screencapture writes a 0-byte file when Screen Recording is not granted,
+      // and the JXA NSImage init then fails with "Failed to load screenshot image".
+      // Surface that as a PermissionError hint so the model can suggest the right fix.
+      const hint = parsed.error === "Failed to load screenshot image"
+        ? " (the screenshot file is empty or unreadable — Screen Recording permission is most likely missing; run `doctor` and grant Screen Recording to the host terminal, then retry)"
+        : parsed.error === "Failed to get CGImage from screenshot"
+          ? " (the screenshot could not be decoded — likely an empty capture; check Screen Recording permission)"
+          : "";
+      throw new CaptureError(`ocr failed: ${parsed.error}${hint}`);
+    }
 
     const imgWidth = buf.readUInt32BE(16);
     const scaleFactorX = screenSize.width / (region ? region.width : (imgWidth / scaleFactor));

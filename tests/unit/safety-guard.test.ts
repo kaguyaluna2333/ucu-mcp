@@ -141,6 +141,11 @@ describe("OBSERVE_ACTIONS / INPUT_ACTIONS classification (M6.1)", () => {
       "wait",
       "wait_for_element",
       "doctor",
+      "clipboard_read",
+      // focus_app is read-only: it only sets the active target context via
+      // AppleScript activate and an AX window lookup — it does not synthesize
+      // mouse or keyboard input, so the user-activity pause must not block it.
+      "focus_app",
     ];
     for (const action of expected) {
       expect(OBSERVE_ACTIONS.has(action)).toBe(true);
@@ -195,6 +200,37 @@ describe("OBSERVE_ACTIONS / INPUT_ACTIONS classification (M6.1)", () => {
     const notSkipped = guard.checkAction("screenshot", {});
     expect(notSkipped.allowed).toBe(false);
     expect(notSkipped.reason).toContain("User activity detected");
+  });
+
+  it("checkAction skips user activity pause for focus_app when the caller threads classifyAction() through (as withSafety does)", () => {
+    // SafetyGuard.checkAction itself does NOT auto-classify; the auto-skip
+    // for observe actions is computed by withSafety() in tools.ts using
+    // classifyAction(). This test pins that contract: if the caller passes
+    // skipUserActivityPause: true for an action that classifyAction() labels
+    // as "observe", the user-activity pause does not block.
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    guard.setUserActivityPauseMs(5000);
+    guard.recordUserActivity();
+
+    // (a) Without skip, focus_app is blocked — the bare guard has no
+    // knowledge of OBSERVE_ACTIONS.
+    const blocked = guard.checkAction("focus_app", { app: "CC Switch" });
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.reason).toContain("User activity detected");
+
+    // (b) With skip, focus_app passes. This is what withSafety() does for
+    // any action where classifyAction() returns "observe", and it is the
+    // path that focus_app follows in production.
+    const skipped = guard.checkAction("focus_app", { app: "CC Switch" }, { skipUserActivityPause: true });
+    expect(skipped.allowed).toBe(true);
+
+    // (c) classifyAction() must label focus_app as observe so that the
+    // production withSafety() default actually skips.
+    expect(classifyAction("focus_app")).toBe("observe");
+  });
+
+  it("classifyAction classifies focus_app as observe", () => {
+    expect(classifyAction("focus_app")).toBe("observe");
   });
 
   it("checkAction applies user activity pause for input actions", () => {

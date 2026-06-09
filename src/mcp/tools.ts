@@ -112,13 +112,21 @@ function errorDetails(error: unknown): Record<string, unknown> {
   const err = error instanceof Error ? error : new Error(String(error));
   const code = error instanceof UcuError ? error.code : "UNKNOWN_ERROR";
   const retryable = error instanceof UcuError ? error.retryable : false;
-  return {
+  // Some platform errors carry an inline `hint` field (added by macos.ts focusApp
+  // for the Electron AX case, etc.). Surface it under `hint` so the model can
+  // see remediation without parsing the message string.
+  const inlineHint = (err as Error & { hint?: unknown }).hint;
+  const details: Record<string, unknown> = {
     name: err.name,
     code,
     retryable,
     message: err.message,
     recovery: recoveryHint(code),
   };
+  if (typeof inlineHint === "string" && inlineHint.length > 0) {
+    details.hint = inlineHint;
+  }
+  return details;
 }
 
 /**
@@ -379,7 +387,27 @@ export function registerTools(server: McpServer): void {
     includeMinimized: z.boolean().optional().describe("Include minimized windows"),
   }, async (params) => {
     const windows = await withSafety<WindowInfo[]>({ action: "list_windows", params: {}, requiresAccessibility: true, execute: () => getPlatform().listWindows(params.includeMinimized) });
-    return { content: [{ type: "text", text: JSON.stringify(windows, null, 2) }] };
+    // Attach a diagnostic hint when the result is empty so the model can
+    // tell the difference between "no windows are open" and "AX enumeration
+    // failed for the target app" (common with Electron apps like CC Switch,
+    // VS Code, Discord). The windows list itself is the source of truth; the
+    // hint is advisory only.
+    let diagnostics: { hint: string; accessibility: "granted" | "denied" | "unknown" } | undefined;
+    if (windows.length === 0) {
+      let accessibility: "granted" | "denied" | "unknown" = "unknown";
+      try {
+        const { checkPermission } = await import("../safety/permissions.js");
+        const { granted } = await checkPermission("accessibility");
+        accessibility = granted ? "granted" : "denied";
+      } catch { /* keep unknown */ }
+      const axNote = accessibility === "denied"
+        ? "Accessibility is currently denied to this terminal — grant it via System Settings > Privacy & Security > Accessibility, then retry."
+        : accessibility === "granted"
+          ? "Accessibility is granted. If you expected a specific app to appear here, it is likely an Electron app whose AX tree is not exposed to System Events; try modifying its config file or database directly rather than driving the UI."
+          : "Accessibility status is unknown. Run `doctor` first to verify.";
+      diagnostics = { hint: `list_windows returned 0 windows. ${axNote}`, accessibility };
+    }
+    return { content: [{ type: "text", text: JSON.stringify(diagnostics ? { windows, diagnostics } : windows, null, 2) }] };
   });
   registry.register("list_windows");
 
@@ -489,29 +517,69 @@ export function registerTools(server: McpServer): void {
   registry.register("drag");
 
   registerTool("doctor", "Check system permissions, native helpers, and client readiness", {}, async () => {
-    const { checkPermissions } = await import("../safety/permissions.js");
+    const { checkPermissions, getPermissionInstructions, getTerminalAppName } = await import("../safety/permissions.js");
     const { MacOSPlatform: MacPlat } = await import("../platform/macos.js");
-    const { existsSync } = await import("node:fs");
-    const { join, dirname } = await import("node:path");
+    const { existsSync, statSync } = await import("node:fs");
+    const { join, dirname, resolve } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
     const { execFileSync } = await import("node:child_process");
     const permissions = await checkPermissions();
     const screenLocked = process.platform === "darwin" ? new MacPlat().isScreenLocked?.() ?? false : false;
+    const termApp = process.platform === "darwin" ? getTerminalAppName() : undefined;
 
-    let nativeHelpers: { cgevent: boolean; ocr: boolean } | undefined;
-    if (process.platform === "darwin") {
+    // Resolve native helper binaries across every install layout we have seen:
+    //  - dev: process.cwd() === project root
+    //  - npm install --prefix X: argv[1] is in X/node_modules/ucu-mcp/...
+    //  - global install via npm: argv[1] is in $(npm root -g)/ucu-mcp/...
+    //  - npx: argv[1] is in ~/.npm/_npx/.../node_modules/ucu-mcp/...
+    //  - bin/ucu-mcp.js is the entry; dist/src/*/tools.js is the module path
+    function resolveHelperPath(relParts: string[]): { path: string | null; tried: string[] } {
+      const tried: string[] = [];
+      const tryPaths: string[] = [];
       const moduleDir = dirname(fileURLToPath(import.meta.url));
-      const checkPaths = (subdirs: string[]) => {
-        const paths = [
-          join(process.cwd(), ...subdirs),
-          join(moduleDir, "..", ...subdirs),
-          join(moduleDir, "..", "..", ...subdirs),
-        ];
-        return paths.some(p => { try { return existsSync(p); } catch { return false; } });
-      };
+      const argv1 = process.argv[1] ? resolve(process.argv[1]) : "";
+      const argv1Dir = argv1 ? dirname(argv1) : "";
+      // (1) process.cwd() — dev invocation
+      tryPaths.push(join(process.cwd(), ...relParts));
+      // (2) argv[1] dir — npm / npx / global
+      if (argv1Dir) {
+        tryPaths.push(join(argv1Dir, ...relParts));
+        tryPaths.push(join(argv1Dir, "..", ...relParts));
+        tryPaths.push(join(argv1Dir, "..", "..", ...relParts));
+      }
+      // (3) module dir — dist/bin or dist/src/mcp; walk up to 4 levels
+      tryPaths.push(join(moduleDir, "..", ...relParts));
+      tryPaths.push(join(moduleDir, "..", "..", ...relParts));
+      tryPaths.push(join(moduleDir, "..", "..", "..", ...relParts));
+      tryPaths.push(join(moduleDir, "..", "..", "..", "..", ...relParts));
+      // (4) npm root -g for global install (best effort)
+      if (process.platform === "darwin") {
+        try {
+          const npmRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf-8", timeout: 2000 }).trim();
+          if (npmRoot) {
+            tryPaths.push(join(npmRoot, "ucu-mcp", ...relParts));
+          }
+        } catch { /* npm not on PATH is fine */ }
+      }
+      for (const p of tryPaths) {
+        tried.push(p);
+        try {
+          if (existsSync(p) && statSync(p).isFile()) return { path: p, tried };
+        } catch { /* skip */ }
+      }
+      return { path: null, tried };
+    }
+
+    let nativeHelpers:
+      | { cgevent: { ok: boolean; path: string | null; tried: string[] };
+          ocr: { ok: boolean; path: string | null; tried: string[] } }
+      | undefined;
+    if (process.platform === "darwin") {
+      const cgevent = resolveHelperPath(["native", "cgevent", "cgevent-helper"]);
+      const ocr = resolveHelperPath(["native", "ocr", "ocr-helper"]);
       nativeHelpers = {
-        cgevent: checkPaths(["native", "cgevent", "cgevent-helper"]),
-        ocr: checkPaths(["native", "ocr", "ocr-helper"]),
+        cgevent: { ok: cgevent.path !== null, path: cgevent.path, tried: cgevent.tried.slice(0, 3) },
+        ocr: { ok: ocr.path !== null, path: ocr.path, tried: ocr.tried.slice(0, 3) },
       };
     }
 
@@ -519,22 +587,32 @@ export function registerTools(server: McpServer): void {
     const issues: string[] = [];
     if (!permissions.granted) {
       readiness = "blocked";
-      issues.push("Missing macOS permissions: " + permissions.missing.join(", "));
+      for (const m of (permissions.missing ?? []) as Array<"accessibility" | "screenRecording">) {
+        issues.push(`Missing macOS permission: ${m}`);
+      }
     }
     if (screenLocked) {
       readiness = "blocked";
       issues.push("Screen is locked");
     }
     if (process.platform === "darwin" && nativeHelpers) {
-      if (!nativeHelpers.cgevent) {
+      if (!nativeHelpers.cgevent.ok) {
         readiness = readiness === "ready" ? "degraded" : readiness;
-        issues.push("Native CGEvent helper not found (input synthesis may crash on macOS Sequoia+)");
+        issues.push("Native CGEvent helper not found (input synthesis may crash on macOS Sequoia+). Run `npm run build` to compile it, or reinstall ucu-mcp so the helper ships from the tarball.");
       }
-      if (!nativeHelpers.ocr) {
+      if (!nativeHelpers.ocr.ok) {
         readiness = readiness === "ready" ? "degraded" : readiness;
-        issues.push("Native OCR helper not found (OCR may fail on macOS Sequoia+)");
+        issues.push("Native OCR helper not found (OCR may fail on macOS Sequoia+). Run `npm run build` to compile it, or reinstall ucu-mcp so the helper ships from the tarball.");
       }
     }
+
+    // Heuristic AX hint: if Accessibility is granted but list_windows consistently
+    // returns empty for the only app the model cared about, the model has likely
+    // hit the Electron AX limitation (Electron windows do not expose AX to System
+    // Events unless Accessibility is also granted to the Electron process itself,
+    // and the app has accessibility features enabled). This block is read-only —
+    // we never hit JXA here because the doctor must stay fast and side-effect free.
+    const electronHint = "If the target app is Electron (e.g. CC Switch, VS Code, Discord), list_windows may return [] even with Accessibility granted to your terminal. Grant Accessibility to the Electron app itself in System Settings > Privacy & Security > Accessibility, and restart the app. As a workaround, modify the app\'s config file or database directly rather than driving the UI.";
 
     const clients: Record<string, string> = {};
     for (const bin of ["claude", "codex", "opencode", "npx"]) {
@@ -548,13 +626,21 @@ export function registerTools(server: McpServer): void {
 
     const recommendations: string[] = [];
     if (readiness === "blocked") {
-      recommendations.push("Grant missing permissions in System Settings > Privacy & Security, then restart the MCP client.");
-    } else if (readiness === "degraded") {
-      if (nativeHelpers && (!nativeHelpers.cgevent || !nativeHelpers.ocr)) {
-        recommendations.push("Run 'npm run build' to compile native Swift helpers.");
+      for (const m of (permissions.missing ?? []) as Array<"accessibility" | "screenRecording">) {
+        const app = termApp ?? "your terminal app";
+        recommendations.push(`${m}: ${getPermissionInstructions(m)} (Grant to ${app}.)`);
       }
-    } else {
+      if (screenLocked) recommendations.push("Unlock the screen, then retry.");
+    }
+    if (readiness !== "ready") {
+      if (process.platform === "darwin" && nativeHelpers && (!nativeHelpers.cgevent.ok || !nativeHelpers.ocr.ok)) {
+        recommendations.push("Run `npm run build` in the ucu-mcp project to compile native Swift helpers (cgevent-helper, ocr-helper).");
+      }
+    }
+    if (readiness === "ready") {
       recommendations.push("All checks passed. MCP client can proceed with automation.");
+    } else if (process.platform === "darwin") {
+      recommendations.push(electronHint);
     }
 
     const report = {
@@ -565,6 +651,7 @@ export function registerTools(server: McpServer): void {
       node: process.version,
       permissions,
       screenLocked,
+      terminalApp: termApp,
       nativeHelpers,
       clients,
       safety: {

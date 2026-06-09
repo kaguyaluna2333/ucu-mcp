@@ -506,6 +506,49 @@ describe("MacOSPlatform", () => {
   });
 });
 
+// ── OCR error path: distinguish permission failures from Vision errors ─────
+describe("MacOSPlatform ocr", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockReset();
+    execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+  });
+
+  it("surfaces Screen Recording hint when OCR JXA reports a failed image load", async () => {
+    // When Screen Recording permission is missing, screencapture writes a
+    // 0-byte file and the OCR helper fails to load the NSImage. The previous
+    // error string ("Failed to load screenshot image") was correct but
+    // unactionable; the platform layer now appends a hint pointing the model
+    // at the doctor / Screen Recording fix.
+    //
+    // screenshot() goes through promisify(execFile) (async path), while
+    // ocrJxa goes through execFileSync. Both need to be mocked here.
+    execFileMock.mockImplementation((cmd: string, _args: any[], _cb: any) => {
+      if (cmd === "screencapture") {
+        // Async path: write an empty file at the requested outFile, then
+        // resolve. We have to call the callback to mimic promisify semantics.
+        const fs = require("node:fs") as typeof import("node:fs");
+        const outFile = _args[_args.length - 1] as string;
+        try { fs.writeFileSync(outFile, Buffer.alloc(0)); } catch { /* ignore */ }
+        _cb?.(null, Buffer.alloc(0));
+        return undefined;
+      }
+      _cb?.(null, "");
+      return undefined;
+    });
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === "osascript") {
+        return JSON.stringify({ error: "Failed to load screenshot image", elements: [], fullText: "" });
+      }
+      // ocrNative falls back to ocrJxa; provide a noop OCR payload so
+      // ocrNative returns null and the JXA branch is exercised.
+      return "";
+    });
+    const platform = new MacOSPlatform();
+
+    await expect(platform.ocr(0, { x: 0, y: 0, width: 100, height: 100 })).rejects.toThrow(/Screen Recording permission is most likely missing/);
+  });
+});
+
 // ── AX Element Cache: Expiration, Size Limit, Signature Matching ────────
 
 describe("MacOSPlatform elementCache", () => {

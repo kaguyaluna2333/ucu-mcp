@@ -132,6 +132,10 @@ export const OBSERVE_ACTIONS: ReadonlySet<string> = new Set([
   "wait_for_element",
   "doctor",
   "clipboard_read",
+  // focus_app only sets the active target context via AppleScript activate
+  // and an AX window lookup — it does not synthesize mouse or keyboard input,
+  // so the user-activity pause must not block it. (OpenCode 0.3.7 follow-up)
+  "focus_app",
 ]);
 
 /** Actions that synthesize user input — need full user-activity protection. */

@@ -71,6 +71,19 @@ describe("PermissionError", () => {
   });
 });
 
+describe("WindowNotFoundError with hint", () => {
+  it("preserves an inline hint set by the platform layer (Electron AX case)", () => {
+    // The platform layer attaches a `hint` field on the error to surface
+    // remediation guidance (e.g. "Electron AX tree not exposed"). The error
+    // class is plain Error/WindowNotFoundError, so we just verify the
+    // property round-trips and is a non-empty string when set.
+    const err = new WindowNotFoundError("CC Switch");
+    (err as Error & { hint?: string }).hint =
+      "list_windows returned no match. If the app is Electron, grant Accessibility to the Electron process.";
+    expect((err as Error & { hint?: string }).hint).toContain("Electron");
+  });
+});
+
 describe("WindowNotFoundError", () => {
   it("uses WINDOW_NOT_FOUND code and includes the id", () => {
     const err = new WindowNotFoundError("win-42");

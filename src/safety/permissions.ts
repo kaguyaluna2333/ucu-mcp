@@ -19,7 +19,7 @@ export interface PermissionDetail {
 /**
  * Get the name of the terminal app that the user needs to authorize.
  */
-function getTerminalAppName(): string {
+export function getTerminalAppName(): string {
   // Walk up the process tree to find the terminal emulator
   const ppid = process.ppid;
   // Common terminal app names
