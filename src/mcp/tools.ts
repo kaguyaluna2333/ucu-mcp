@@ -403,7 +403,7 @@ export function registerTools(server: McpServer): void {
       const axNote = accessibility === "denied"
         ? "Accessibility is currently denied to this terminal — grant it via System Settings > Privacy & Security > Accessibility, then retry."
         : accessibility === "granted"
-          ? "Accessibility is granted. If you expected a specific app to appear here, it is likely an Electron app whose AX tree is not exposed to System Events; try modifying its config file or database directly rather than driving the UI."
+          ? "Accessibility is granted. If you expected a specific app to appear here, it is likely an Electron app whose AX tree is not exposed to System Events. Pixel-level workaround: call screenshot, then ocr to locate the target UI text and get its bounding box, then click(x, y) at those screen coordinates. Alternatively, modify the app's config file or database directly."
           : "Accessibility status is unknown. Run `doctor` first to verify.";
       diagnostics = { hint: `list_windows returned 0 windows. ${axNote}`, accessibility };
     }
@@ -612,7 +612,7 @@ export function registerTools(server: McpServer): void {
     // Events unless Accessibility is also granted to the Electron process itself,
     // and the app has accessibility features enabled). This block is read-only —
     // we never hit JXA here because the doctor must stay fast and side-effect free.
-    const electronHint = "If the target app is Electron (e.g. CC Switch, VS Code, Discord), list_windows may return [] even with Accessibility granted to your terminal. Grant Accessibility to the Electron app itself in System Settings > Privacy & Security > Accessibility, and restart the app. As a workaround, modify the app\'s config file or database directly rather than driving the UI.";
+    const electronHint = "If the target app is Electron (e.g. CC Switch, VS Code, Discord), list_windows may return [] even with Accessibility granted to your terminal. Grant Accessibility to the Electron app itself in System Settings > Privacy & Security > Accessibility, and restart the app. Pixel-level workaround: use screenshot + ocr to locate UI elements by text, then click(x, y) at the detected bounding box coordinates. Alternatively, modify the app\'s config file or database directly.";
 
     const clients: Record<string, string> = {};
     for (const bin of ["claude", "codex", "opencode", "npx"]) {

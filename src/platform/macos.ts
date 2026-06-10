@@ -296,8 +296,10 @@ export class MacOSPlatform implements Platform {
         "the most likely cause is that it is an Electron app whose AX tree is " +
         "not exposed to System Events (System Settings > Privacy & Security > " +
         "Accessibility must be granted to the Electron process itself, not just " +
-        "to the host terminal). As a workaround, modify the app's config file " +
-        "or database directly.";
+        "to the host terminal). Pixel-level workaround: call screenshot to " +
+        "capture the screen, then ocr to locate UI text and get its bounding " +
+        "box coordinates, then click(x, y) at those screen coordinates. " +
+        "Alternatively, modify the app's config file or database directly.";
       throw err;
     }
     this.activeTarget = {
