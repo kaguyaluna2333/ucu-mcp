@@ -5,6 +5,11 @@ import type { Platform, ScreenRegion, ScreenSize, CursorPosition, WindowInfo, Wi
 import { captureFullScreen, captureRegion } from "../utils/screenshot.js";
 import { click as inputClick, doubleClick as inputDoubleClick, move as inputMove, drag as inputDrag, scroll as inputScroll, typeText, pressShortcut } from "../utils/input.js";
 import { CaptureError, ElementNotFoundError, InputSynthesisError, PermissionError, PlatformError, TargetStaleError, UcuError, WindowNotFoundError } from "../util/errors.js";
+import { existsSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __macosDirname = dirname(fileURLToPath(import.meta.url));
 
 const execFileAsync = promisify(execFile);
 
@@ -83,7 +88,19 @@ interface CachedElementDescriptor {
   cachedAt: number;
 }
 
+export interface MacOSPlatformOptions {
+  /**
+   * Override native helper resolution.
+   * - Map of folder name to absolute binary path to inject a specific helper.
+   * - Set a value to null to skip that helper (force JXA fallback).
+   * Used by tests to control native helper behavior without filesystem tricks.
+   */
+  nativeHelperPaths?: Record<string, string | null>;
+}
+
 export class MacOSPlatform implements Platform {
+  private readonly _nativeHelperPaths: Record<string, string | null> | undefined;
+
   private readonly elementCache = new Map<string, CachedElementDescriptor>();
   private readonly elementCacheTtlMs = 30_000;
   private readonly elementCacheMaxSize = 100;
@@ -91,6 +108,11 @@ export class MacOSPlatform implements Platform {
   private windowCache: { cachedAt: number; windows: WindowInfo[] } | undefined;
   private activeTarget: AppTarget | undefined;
   private savedFocus: { appName: string; windowTitle: string } | undefined;
+
+  constructor(options?: MacOSPlatformOptions) {
+    this._nativeHelperPaths = options?.nativeHelperPaths;
+  }
+
 
   // ── Element Cache Management ────────────────────────────────────────────
 
@@ -375,10 +397,85 @@ export class MacOSPlatform implements Platform {
     }
 
     try {
-      // Use System Events instead of CGWindowListCopyWindowInfo.
-      // The CoreGraphics API returns CFArrayRef/CFDictionaryRef which JXA
-      // cannot iterate reliably — CFArrayGetCount works but objectAtIndex
-      // does not. System Events JXA is slower (~3-6s) but correct.
+      // Try native Swift helper first (CGWindowListCopyWindowInfo, ~1ms).
+      // Falls back to JXA System Events if the helper is not available.
+      // The native helper reliably enumerates ALL windows including Electron
+      // apps, whereas JXA relies on System Events AX which is inconsistent
+      // for Chromium-rendered windows.
+      let windows: WindowInfo[];
+      const nativeResult = this.listWindowsNative();
+      if (nativeResult !== null) {
+        windows = nativeResult;
+      } else {
+        windows = await this.listWindowsJxa();
+      }
+
+      this.windowCache = {
+        cachedAt: Date.now(),
+        windows: windows.map((window) => ({
+          ...window,
+          bounds: { ...window.bounds },
+        })),
+      };
+      return windows;
+    } catch {
+      // Fallback: return empty list if both methods fail
+      return [];
+    }
+  }
+
+  private listWindowsNative(): WindowInfo[] | null {
+    try {
+      const helperPath = this.resolveNativeHelper("windowlist", "windowlist-helper");
+      if (!helperPath) return null;
+      const out = execFileSync(helperPath, [], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+      const parsed = JSON.parse(out.trim()) as {
+        windows: Array<{
+          id: string; title: string; processName: string; pid: number;
+          bounds: { x: number; y: number; width: number; height: number };
+          isOnScreen: boolean; windowNumber: number;
+        }>;
+        error?: string;
+      };
+      if (parsed.error) return null;
+      return parsed.windows.map(w => ({
+        id: w.id,
+        title: w.title,
+        processName: w.processName,
+        pid: w.pid,
+        bounds: w.bounds,
+        isMinimized: !w.isOnScreen,
+        isOnScreen: w.isOnScreen,
+      }));
+    } catch {
+      return null;
+    }
+  }
+
+  private resolveNativeHelper(folder: string, binary: string): string | null {
+    // Test injection: if the caller provided explicit paths, use those
+    // instead of hitting the filesystem.
+    if (this._nativeHelperPaths && folder in this._nativeHelperPaths) {
+      const override = this._nativeHelperPaths[folder];
+      // null means "skip native, force JXA fallback"
+      return override === null ? null : override;
+    }
+    // dev: src/platform/macos.ts → native/<folder>/<binary>
+    // prod: dist/src/platform/macos.js → native/<folder>/<binary>
+    const candidates = [
+      join(__macosDirname, "..", "..", "native", folder, binary),
+      join(__macosDirname, "..", "..", "..", "native", folder, binary),
+    ];
+    for (const p of candidates) {
+      if (existsSync(p)) return p;
+    }
+    return null;
+  }
+
+  private async listWindowsJxa(): Promise<WindowInfo[]> {
       const jxaScript = `
         var se = Application('System Events');
         var result = [];
@@ -418,19 +515,7 @@ export class MacOSPlatform implements Platform {
         "-l", "JavaScript",
         "-e", jxaScript
       ], { encoding: "utf-8", timeout: 15000 });
-      const windows = JSON.parse(jxaOut.trim()) as WindowInfo[];
-      this.windowCache = {
-        cachedAt: Date.now(),
-        windows: windows.map((window) => ({
-          ...window,
-          bounds: { ...window.bounds },
-        })),
-      };
-      return windows;
-    } catch {
-      // Fallback: return empty list if JXA fails
-      return [];
-    }
+      return JSON.parse(jxaOut.trim()) as WindowInfo[];
   }
 
   async getWindowState(windowId?: string, depth?: number, includeBounds: boolean = true): Promise<WindowState> {

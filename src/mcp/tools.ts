@@ -572,14 +572,17 @@ export function registerTools(server: McpServer): void {
 
     let nativeHelpers:
       | { cgevent: { ok: boolean; path: string | null; tried: string[] };
-          ocr: { ok: boolean; path: string | null; tried: string[] } }
+          ocr: { ok: boolean; path: string | null; tried: string[] };
+          windowlist: { ok: boolean; path: string | null; tried: string[] } }
       | undefined;
     if (process.platform === "darwin") {
       const cgevent = resolveHelperPath(["native", "cgevent", "cgevent-helper"]);
       const ocr = resolveHelperPath(["native", "ocr", "ocr-helper"]);
+      const windowlist = resolveHelperPath(["native", "windowlist", "windowlist-helper"]);
       nativeHelpers = {
         cgevent: { ok: cgevent.path !== null, path: cgevent.path, tried: cgevent.tried.slice(0, 3) },
         ocr: { ok: ocr.path !== null, path: ocr.path, tried: ocr.tried.slice(0, 3) },
+        windowlist: { ok: windowlist.path !== null, path: windowlist.path, tried: windowlist.tried.slice(0, 3) },
       };
     }
 
@@ -603,6 +606,10 @@ export function registerTools(server: McpServer): void {
       if (!nativeHelpers.ocr.ok) {
         readiness = readiness === "ready" ? "degraded" : readiness;
         issues.push("Native OCR helper not found (OCR may fail on macOS Sequoia+). Run `npm run build` to compile it, or reinstall ucu-mcp so the helper ships from the tarball.");
+      }
+      if (!nativeHelpers.windowlist.ok) {
+        readiness = readiness === "ready" ? "degraded" : readiness;
+        issues.push("Native windowlist helper not found (window enumeration will fall back to slow JXA). Run `npm run build` to compile it.");
       }
     }
 
@@ -634,7 +641,10 @@ export function registerTools(server: McpServer): void {
     }
     if (readiness !== "ready") {
       if (process.platform === "darwin" && nativeHelpers && (!nativeHelpers.cgevent.ok || !nativeHelpers.ocr.ok)) {
-        recommendations.push("Run `npm run build` in the ucu-mcp project to compile native Swift helpers (cgevent-helper, ocr-helper).");
+        recommendations.push("Run `npm run build` in the ucu-mcp project to compile native Swift helpers (cgevent-helper, ocr-helper, windowlist-helper).");
+      }
+      if (process.platform === "darwin" && nativeHelpers && !nativeHelpers.windowlist.ok) {
+        recommendations.push("windowlist helper missing — list_windows will fall back to JXA (~3-6s, unreliable for Electron). Run `npm run build`.");
       }
     }
     if (readiness === "ready") {

@@ -18,6 +18,14 @@ function lastJxaScript(): string {
   return args.at(-1) ?? "";
 }
 
+/** Create a MacOSPlatform with native windowlist helper disabled,
+ *  forcing listWindows to use the JXA path. Tests that verify JXA
+ *  behavior or set up precise mock sequences for listWindows need
+ *  this so the native helper doesn't consume an execFileSync call. */
+function jxaOnlyPlatform(): MacOSPlatform {
+  return new MacOSPlatform({ nativeHelperPaths: { windowlist: null } });
+}
+
 describe("MacOSPlatform", () => {
   beforeEach(() => {
     execFileSyncMock.mockReset();
@@ -118,7 +126,7 @@ describe("MacOSPlatform", () => {
     execFileSyncMock
       .mockReturnValueOnce(JSON.stringify([]))
       .mockReturnValueOnce(JSON.stringify({ error: "Window not found", window: null }));
-    const platform = new MacOSPlatform();
+    const platform = jxaOnlyPlatform();
 
     await expect(platform.getWindowState("Notes/win9"))
       .rejects.toBeInstanceOf(WindowNotFoundError);
@@ -138,7 +146,7 @@ describe("MacOSPlatform", () => {
           isOnScreen: true,
         },
       ]));
-    const platform = new MacOSPlatform();
+    const platform = jxaOnlyPlatform();
 
     const target = await platform.focusApp("TextEdit");
 
@@ -178,7 +186,7 @@ describe("MacOSPlatform", () => {
           isOnScreen: true,
         },
       ]));
-    const platform = new MacOSPlatform();
+    const platform = jxaOnlyPlatform();
 
     const target = await platform.focusApp("TextEdit");
 
@@ -196,7 +204,7 @@ describe("MacOSPlatform", () => {
         { id: "App/win0", title: "Win", processName: "App", pid: 1, bounds: { x: 0, y: 0, width: 100, height: 100 }, isMinimized: false, isOnScreen: true }
       ])) // first listWindows
       .mockReturnValueOnce(JSON.stringify([])); // second listWindows (stale)
-    const platform = new MacOSPlatform();
+    const platform = jxaOnlyPlatform();
     await platform.focusApp("App");
     let error: unknown;
     try {
@@ -215,7 +223,7 @@ describe("MacOSPlatform", () => {
         { id: "App/win0", title: "Win", processName: "App", pid: 1, bounds: { x: 0, y: 0, width: 100, height: 100 }, isMinimized: false, isOnScreen: true },
       ]))
       .mockReturnValueOnce(JSON.stringify([]));
-    const platform = new MacOSPlatform();
+    const platform = jxaOnlyPlatform();
     await platform.focusApp("App");
 
     let error: unknown;
@@ -240,7 +248,7 @@ describe("MacOSPlatform", () => {
         isOnScreen: true,
       },
     ]));
-    const platform = new MacOSPlatform();
+    const platform = jxaOnlyPlatform();
 
     const first = await platform.listWindows();
     first[0].bounds.x = 999;
@@ -336,7 +344,7 @@ describe("MacOSPlatform", () => {
           children: [],
         },
       }));
-    const platform = new MacOSPlatform();
+    const platform = jxaOnlyPlatform();
 
     const state = await platform.getWindowState("123", 3, true);
 
@@ -846,5 +854,143 @@ describe("MacOSPlatform elementCache", () => {
     expect(script).toContain("e.identifier()");
     expect(script).toMatch(/cached\.subrole.*score \+= 2/);
     expect(script).toMatch(/cached\.identifier.*score \+= 3/);
+  });
+});
+
+// ── Native windowlist helper (CGWindowListCopyWindowInfo) ────────────
+describe("MacOSPlatform native windowlist", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockReset();
+    execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+  });
+
+  it("uses native helper when available and returns windows", async () => {
+    const nativePayload = JSON.stringify({
+      windows: [
+        { id: "CC Switch/win1498", title: "", processName: "CC Switch", pid: 49180,
+          bounds: { x: 231, y: 103, width: 1000, height: 651 }, isOnScreen: true, windowNumber: 1498 },
+        { id: "TextEdit/win10", title: "Untitled", processName: "TextEdit", pid: 42,
+          bounds: { x: 10, y: 20, width: 300, height: 200 }, isOnScreen: true, windowNumber: 10 },
+      ],
+    });
+    execFileSyncMock.mockReturnValue(nativePayload);
+    const platform = new MacOSPlatform({
+      nativeHelperPaths: { windowlist: "/fake/windowlist-helper" },
+    });
+
+    const windows = await platform.listWindows();
+
+    expect(windows).toHaveLength(2);
+    expect(windows[0]).toMatchObject({
+      id: "CC Switch/win1498",
+      processName: "CC Switch",
+      pid: 49180,
+      bounds: { x: 231, y: 103, width: 1000, height: 651 },
+      isMinimized: false,
+      isOnScreen: true,
+    });
+    expect(windows[1]).toMatchObject({
+      id: "TextEdit/win10",
+      title: "Untitled",
+      processName: "TextEdit",
+    });
+    // Should only call execFileSync once (native path), no JXA fallback
+    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+    expect(execFileSyncMock.mock.calls[0][0]).toBe("/fake/windowlist-helper");
+  });
+
+  it("falls back to JXA when native helper returns error", async () => {
+    execFileSyncMock
+      .mockReturnValueOnce(JSON.stringify({ windows: [], error: "CGWindowListCopyWindowInfo returned nil" }))
+      .mockReturnValueOnce(JSON.stringify([
+        { id: "Safari/win1", title: "Page", processName: "Safari", pid: 100,
+          bounds: { x: 0, y: 0, width: 800, height: 600 }, isMinimized: false, isOnScreen: true },
+      ]));
+    const platform = new MacOSPlatform({
+      nativeHelperPaths: { windowlist: "/fake/windowlist-helper" },
+    });
+
+    const windows = await platform.listWindows();
+
+    expect(windows).toHaveLength(1);
+    expect(windows[0].processName).toBe("Safari");
+    // Two calls: native (error) + JXA fallback
+    expect(execFileSyncMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to JXA when native helper throws", async () => {
+    let callCount = 0;
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      callCount++;
+      if (cmd === "/fake/windowlist-helper") throw new Error("ENOENT");
+      return JSON.stringify([
+        { id: "Notes/win0", title: "Note", processName: "Notes", pid: 50,
+          bounds: { x: 0, y: 0, width: 400, height: 300 }, isMinimized: false, isOnScreen: true },
+      ]);
+    });
+    const platform = new MacOSPlatform({
+      nativeHelperPaths: { windowlist: "/fake/windowlist-helper" },
+    });
+
+    const windows = await platform.listWindows();
+
+    expect(windows).toHaveLength(1);
+    expect(windows[0].processName).toBe("Notes");
+  });
+
+  it("falls back to JXA when nativeHelperPaths[windowlist] is null", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify([
+      { id: "Notes/win0", title: "Note", processName: "Notes", pid: 50,
+        bounds: { x: 0, y: 0, width: 400, height: 300 }, isMinimized: false, isOnScreen: true },
+    ]));
+    const platform = jxaOnlyPlatform();
+
+    const windows = await platform.listWindows();
+
+    expect(windows).toHaveLength(1);
+    // Only JXA call, no native attempt
+    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+    expect(execFileSyncMock.mock.calls[0][0]).toBe("osascript");
+  });
+
+  it("focus_app uses native windowlist to find Electron apps", async () => {
+    const nativePayload = JSON.stringify({
+      windows: [
+        { id: "CC Switch/win1498", title: "", processName: "CC Switch", pid: 49180,
+          bounds: { x: 231, y: 103, width: 1000, height: 651 }, isOnScreen: true, windowNumber: 1498 },
+      ],
+    });
+    execFileSyncMock
+      .mockReturnValueOnce("") // activate AppleScript
+      .mockReturnValueOnce(nativePayload); // listWindows native
+    const platform = new MacOSPlatform({
+      nativeHelperPaths: { windowlist: "/fake/windowlist-helper" },
+    });
+
+    const target = await platform.focusApp("CC Switch");
+
+    expect(target.appName).toBe("CC Switch");
+    expect(target.pid).toBe(49180);
+    expect(target.windowId).toBe("CC Switch/win1498");
+  });
+
+  it("caches native windowlist results", async () => {
+    const nativePayload = JSON.stringify({
+      windows: [
+        { id: "App/win1", title: "T", processName: "App", pid: 1,
+          bounds: { x: 0, y: 0, width: 100, height: 100 }, isOnScreen: true, windowNumber: 1 },
+      ],
+    });
+    execFileSyncMock.mockReturnValue(nativePayload);
+    const platform = new MacOSPlatform({
+      nativeHelperPaths: { windowlist: "/fake/windowlist-helper" },
+    });
+
+    const first = await platform.listWindows();
+    first[0].bounds.x = 999;
+    const second = await platform.listWindows();
+
+    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+    expect(second[0].bounds.x).toBe(0);
   });
 });
