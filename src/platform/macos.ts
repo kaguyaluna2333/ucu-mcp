@@ -319,7 +319,7 @@ export class MacOSPlatform implements Platform {
       // app name so the tool handler can surface a remediation hint. The
       // bare WindowNotFoundError("CC Switch") was indistinguishable from
       // "the app is not running", which led models to retry forever.
-    this.activeTarget = undefined; // Clear stale target on focus failure
+      this.activeTarget = undefined; // Clear stale target on focus failure
       const err = new WindowNotFoundError(app);
       (err as Error & { hint?: string }).hint =
         "list_windows returned no match for this app. If the app is running, " +
@@ -407,7 +407,7 @@ export class MacOSPlatform implements Platform {
     // P0 #3: Prevent concurrent cache refreshes
     if (this.windowCacheInFlight) {
       // Another call is already refreshing; return stale or empty
-      return this.windowCache?.windows ?? [];
+      return this.windowCache?.windows.map(w => ({ ...w, bounds: { ...w.bounds } })) ?? [];
     }
     this.windowCacheInFlight = true;
 
@@ -1714,12 +1714,13 @@ export class MacOSPlatform implements Platform {
         if (!didSet) {
           try {
             se.keystroke(textToType);
+            _result = {success: true};
           } catch(e) {
             _result = {success: false, error: "Could not type into element: " + String(e.message || e)};
           }
+        } else {
+          _result = {success: true};
         }
-
-        _result = {success: true};
       }
       JSON.stringify(_result);
     `;

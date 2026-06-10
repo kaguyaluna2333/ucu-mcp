@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-11
+
+### Fixed
+
+- **JXA return values fixed (P0)**: Three JXA scripts (`click_element`, `type_in_element`, `set_value`) called `JSON.stringify({success:…})` as a bare statement — the result was computed but discarded, so the osascript output was empty and `JSON.parse(out)` would fail or return undefined. Now each script assigns to `_result` and calls `JSON.stringify(_result)` once at the end.
+- **Rate-limit timestamp ordering (P0)**: `lastActionTime` was updated before the user-activity pause check. If the pause blocked the action, the rate-limit window was consumed anyway, causing subsequent retries to also be rate-limited. Now `lastActionTime` is set only after both checks pass.
+- **Window cache concurrency guard (P0)**: `listWindows` could be called concurrently (e.g. `validateActiveTarget` + `list_windows` tool). Two overlapping calls could write `windowCache` at the same time, producing torn reads. Added `windowCacheInFlight` flag — concurrent callers return stale data instead of racing.
+- **`validateActiveTarget` checks pid (P1)**: Previously only checked windowId, missing the case where an app restarts and the OS reuses the same window ID. Now also checks pid match.
+- **`focusApp` failure clears stale target (P1)**: When `focusApp` threw `WindowNotFoundError`, the old `activeTarget` was retained. Subsequent AX tools would try to use the dead target. Now `activeTarget` is cleared on failure.
+- **`get_screen_size` goes through `withSafety` (P1)**: Was the only tool that bypassed the safety/permission/retry pipeline. Now wrapped in `withSafety` for consistent error handling and rate limiting.
+
+### Tests
+
+- 225 unit tests pass (13 test files).
+- MCP stdio smoke: `doctor`, `list_windows`, `list_apps`, `get_screen_size` all return valid responses.
+- All 3 JXA scripts now produce valid JSON output (verified via stdio pipe test).
+
+
 ## [0.3.8] - 2026-06-08
 
 ### Fixed
