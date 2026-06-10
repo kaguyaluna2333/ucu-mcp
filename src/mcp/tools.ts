@@ -7,7 +7,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { Platform, WindowInfo, CursorPosition, OcrResult, FindElementResult, FindElementResponse, WindowState, AppTarget } from "../platform/base.js";
+import type { Platform, WindowInfo, CursorPosition, OcrResult, FindElementResult, FindElementResponse, WindowState, AppTarget, ScreenSize } from "../platform/base.js";
 import { MacOSPlatform } from "../platform/macos.js";
 import { SafetyGuard, classifyAction } from "../safety/guard.js";
 import { checkPermission } from "../safety/permissions.js";
@@ -747,7 +747,8 @@ export function registerTools(server: McpServer): void {
   registerTool("get_screen_size", "Get screen dimensions and scale factor", {
     display: z.number().optional().describe("Display index"),
   }, async (params) => {
-    return { content: [{ type: "text", text: JSON.stringify(getPlatform().getScreenSize(params.display), null, 2) }] };
+    const result = await withSafety<ScreenSize>({ action: "get_screen_size", params: {}, execute: () => Promise.resolve(getPlatform().getScreenSize(params.display)) });
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   });
   registry.register("get_screen_size");
 

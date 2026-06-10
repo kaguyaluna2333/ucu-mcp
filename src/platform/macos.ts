@@ -106,6 +106,7 @@ export class MacOSPlatform implements Platform {
   private readonly elementCacheMaxSize = 100;
   private readonly windowCacheTtlMs = 300;
   private windowCache: { cachedAt: number; windows: WindowInfo[] } | undefined;
+  private windowCacheInFlight = false;
   private activeTarget: AppTarget | undefined;
   private savedFocus: { appName: string; windowTitle: string } | undefined;
 
@@ -158,8 +159,12 @@ export class MacOSPlatform implements Platform {
     if (!this.activeTarget?.windowId) return;
     this.windowCache = undefined; // Bypass cache — stale detection must use fresh data
     const windows = await this.listWindows(true);
-    const stillExists = windows.some(w => w.id === this.activeTarget!.windowId);
-    if (!stillExists) {
+    const match = windows.find(w => w.id === this.activeTarget!.windowId);
+    if (!match) {
+      throw new TargetStaleError(this.activeTarget.windowId);
+    }
+    // Also invalidate if pid changed (app restarted)
+    if (match.pid !== this.activeTarget.pid) {
       throw new TargetStaleError(this.activeTarget.windowId);
     }
   }
@@ -314,6 +319,7 @@ export class MacOSPlatform implements Platform {
       // app name so the tool handler can surface a remediation hint. The
       // bare WindowNotFoundError("CC Switch") was indistinguishable from
       // "the app is not running", which led models to retry forever.
+    this.activeTarget = undefined; // Clear stale target on focus failure
       const err = new WindowNotFoundError(app);
       (err as Error & { hint?: string }).hint =
         "list_windows returned no match for this app. If the app is running, " +
@@ -398,6 +404,13 @@ export class MacOSPlatform implements Platform {
       }));
     }
 
+    // P0 #3: Prevent concurrent cache refreshes
+    if (this.windowCacheInFlight) {
+      // Another call is already refreshing; return stale or empty
+      return this.windowCache?.windows ?? [];
+    }
+    this.windowCacheInFlight = true;
+
     try {
       // Try native Swift helper first (CGWindowListCopyWindowInfo, ~1ms).
       // Falls back to JXA System Events if the helper is not available.
@@ -423,6 +436,8 @@ export class MacOSPlatform implements Platform {
     } catch {
       // Fallback: return empty list if both methods fail
       return [];
+    } finally {
+      this.windowCacheInFlight = false;
     }
   }
 
@@ -1256,6 +1271,7 @@ export class MacOSPlatform implements Platform {
 
     const jxaScript = `
       var se = Application('System Events');
+      var _result = null;
       function childElements(elem) {
         try { return elem.uiElements(); } catch(e1) {
           try { return elem.elements(); } catch(e2) { return []; }
@@ -1433,11 +1449,11 @@ export class MacOSPlatform implements Platform {
       }
 
       if (!elem) {
-        JSON.stringify({success: false, error: "Element not found: " + elemPath});
+        _result = {success: false, error: "Element not found: " + elemPath};
       } else {
         try {
           elem.actions.AXPress.perform();
-          JSON.stringify({success: true});
+          _result = {success: true};
         } catch(e) {
           try {
             var pos = elem.position();
@@ -1451,12 +1467,13 @@ export class MacOSPlatform implements Platform {
             $.CGEventPost($.kCGHIDEventTap, down);
             var up = $.CGEventCreateMouseEvent(src, $.kCGEventLeftMouseUp, pt, $.kCGMouseButtonLeft);
             $.CGEventPost($.kCGHIDEventTap, up);
-            JSON.stringify({success: true});
+            _result = {success: true};
           } catch(e2) {
-            JSON.stringify({success: false, error: "Could not click element: " + String(e2.message || e2)});
+            _result = {success: false, error: "Could not click element: " + String(e2.message || e2)};
           }
         }
       }
+      JSON.stringify(_result);
     `;
 
     try {
@@ -1490,6 +1507,7 @@ export class MacOSPlatform implements Platform {
 
     const jxaScript = `
       var se = Application('System Events');
+      var _result = null;
       function childElements(elem) {
         try { return elem.uiElements(); } catch(e1) {
           try { return elem.elements(); } catch(e2) { return []; }
@@ -1669,7 +1687,7 @@ export class MacOSPlatform implements Platform {
       }
 
       if (!elem) {
-        JSON.stringify({success: false, error: "Element not found: " + elemPath});
+        _result = {success: false, error: "Element not found: " + elemPath};
       } else {
         try {
           elem.focused = true;
@@ -1697,12 +1715,13 @@ export class MacOSPlatform implements Platform {
           try {
             se.keystroke(textToType);
           } catch(e) {
-            JSON.stringify({success: false, error: "Could not type into element: " + String(e.message || e)});
+            _result = {success: false, error: "Could not type into element: " + String(e.message || e)};
           }
         }
 
-        JSON.stringify({success: true});
+        _result = {success: true};
       }
+      JSON.stringify(_result);
     `;
 
     try {
@@ -1755,6 +1774,7 @@ export class MacOSPlatform implements Platform {
 
     const jxaScript = `
       var se = Application('System Events');
+      var _result = null;
       function childElements(elem) {
         try { return elem.uiElements(); } catch(e1) {
           try { return elem.elements(); } catch(e2) { return []; }
@@ -1928,15 +1948,16 @@ export class MacOSPlatform implements Platform {
       }
 
       if (!elem) {
-        JSON.stringify({success: false, error: "Element not found: " + elemPath});
+        _result = {success: false, error: "Element not found: " + elemPath};
       } else {
         try {
           elem.value = valueToSet;
-          JSON.stringify({success: true});
+          _result = {success: true};
         } catch(e) {
-          JSON.stringify({success: false, error: "Could not set AX value: " + String(e.message || e)});
+          _result = {success: false, error: "Could not set AX value: " + String(e.message || e)};
         }
       }
+      JSON.stringify(_result);
     `;
 
     try {

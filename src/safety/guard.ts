@@ -282,7 +282,6 @@ export class SafetyGuard {
         reason: `Rate-limited: ${elapsed}ms since last action (min ${this.rateLimitMs}ms)`,
       };
     }
-    this.lastActionTime = now;
 
     // 6. User activity pause (skipped for observe-class actions) -----------------
     if (!options.skipUserActivityPause && this.isUserActivityPauseActive()) {
@@ -292,6 +291,7 @@ export class SafetyGuard {
       };
     }
 
+    this.lastActionTime = now;
     return { allowed: true };
   }
 
