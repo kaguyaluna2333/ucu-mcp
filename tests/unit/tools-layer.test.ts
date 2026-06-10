@@ -628,8 +628,10 @@ describe("screenshot tool", () => {
 describe("focus management", () => {
   it("saves/restores focus for input actions", async () => {
     await tools.get("click")!.handler({ x: 10, y: 20 });
-    expect(mockPlat.saveFocus).toHaveBeenCalled();
-    expect(mockPlat.restoreFocus).toHaveBeenCalled();
+    // Focus management is disabled: CGEvent works at HID level without
+    // needing the target app frontmost. saveFocus/restoreFocus are not called.
+    expect(mockPlat.saveFocus).not.toHaveBeenCalled();
+    expect(mockPlat.restoreFocus).not.toHaveBeenCalled();
   });
 
   it("skips focus for read-only actions", async () => {
@@ -646,7 +648,8 @@ describe("focus management", () => {
       retryable: false,
       message: "fail",
     });
-    expect(mockPlat.restoreFocus).toHaveBeenCalled();
+    // Focus management disabled — restoreFocus is not called
+    expect(mockPlat.restoreFocus).not.toHaveBeenCalled();
   });
 
   it("does not retry real input actions after a partial failure", async () => {

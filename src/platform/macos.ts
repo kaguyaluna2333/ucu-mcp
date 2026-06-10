@@ -289,12 +289,14 @@ export class MacOSPlatform implements Platform {
   async focusApp(app: string): Promise<AppTarget> {
     const escapedApp = app.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     this.windowCache = undefined;
-    try {
-      execFileSync("osascript", ["-e", `tell application "${escapedApp}" to activate`], { timeout: 5000 });
-    } catch {
-      // Some app names are process labels rather than AppleScript application names.
-      // Continue with the AX window lookup below so existing callers still work.
-    }
+    // NOTE: We intentionally do NOT call AppleScript "activate" here.
+    // focus_app sets the internal target context so subsequent operations
+    // know which app/window to target. It does NOT bring the app to the
+    // foreground — the user should remain in their current app (terminal,
+    // Codex, etc.) while the agent works in the background.
+    // CGEvent input injection works at the HID level and doesn't require
+    // the target app to be frontmost. AX operations target processes by
+    // name/PID via System Events, also without needing frontmost status.
 
     let target: WindowInfo | undefined;
     const deadline = Date.now() + 3000;

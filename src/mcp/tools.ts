@@ -304,7 +304,13 @@ async function withSafety<T>(sa: SafetyAction): Promise<T> {
   if (sa.requiresAccessibility) { const { granted } = await checkPermission("accessibility"); if (!granted) throw new PermissionError("accessibility", process.platform); }
   if (sa.requiresScreenRecording) { const { granted } = await checkPermission("screenRecording"); if (!granted) throw new PermissionError("screenRecording", process.platform); }
   if (sa.dryRun) return `[DRY-RUN] ${await sa.dryRun()}` as T;
-  const shouldManageFocus = sa.requiresAccessibility && !["screenshot", "list_windows", "list_apps", "get_window_state", "get_cursor_position", "get_screen_size", "ocr", "doctor", "wait", "wait_for_element", "find_element", "focus_app"].includes(sa.action);
+  // Focus management is disabled by default: CGEvent input injection works
+  // at the HID level without requiring the target app to be frontmost, and
+  // AX operations target processes by name/PID via System Events. The user
+  // should remain in their current app while the agent works in the background.
+  // Re-enable saveFocus/restoreFocus only if a specific AX operation truly
+  // requires the target app to be frontmost (rare).
+  const shouldManageFocus = false;
   if (shouldManageFocus) await platform.saveFocus?.();
   const start = Date.now();
   try {

@@ -157,15 +157,13 @@ describe("MacOSPlatform", () => {
     expect(target.title).toBe("Untitled");
     expect(target.capturedAt).toBeTruthy();
     expect(new Date(target.capturedAt).getTime()).toBeGreaterThan(0);
-    expect(execFileSyncMock.mock.calls[0][1]).toEqual([
-      "-e",
-      'tell application "TextEdit" to activate',
-    ]);
+    // activate is no longer called — the first osascript call should be the
+    // JXA listWindows script, not an AppleScript "activate" command.
+    expect(execFileSyncMock.mock.calls[0][1][0]).not.toBe("-e");
   });
 
   it("prefers exact app name matches over helper process substring matches", async () => {
     execFileSyncMock
-      .mockReturnValueOnce("")
       .mockReturnValueOnce(JSON.stringify([
         {
           id: "TextEdit Helper/win0",
@@ -961,7 +959,6 @@ describe("MacOSPlatform native windowlist", () => {
       ],
     });
     execFileSyncMock
-      .mockReturnValueOnce("") // activate AppleScript
       .mockReturnValueOnce(nativePayload); // listWindows native
     const platform = new MacOSPlatform({
       nativeHelperPaths: { windowlist: "/fake/windowlist-helper" },
