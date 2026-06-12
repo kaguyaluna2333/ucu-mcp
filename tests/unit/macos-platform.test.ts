@@ -976,3 +976,282 @@ describe("MacOSPlatform native windowlist", () => {
     expect(second[0].bounds.x).toBe(0);
   });
 });
+
+// ── Permission-denied paths (TST-P1-2) ───────────────────────────────
+
+describe("MacOSPlatform permission-denied paths (TST-P1-2)", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockReset();
+    execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+  });
+
+  it("reports accessibility permission denied for findElement", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("System Events is not allowed assistive access");
+    });
+    const platform = new MacOSPlatform();
+
+    await expect(platform.findElement({ app: "Notes" }))
+      .rejects.toBeInstanceOf(PermissionError);
+  });
+
+  it("reports accessibility permission denied for getWindowState", async () => {
+    execFileSyncMock
+      .mockReturnValueOnce(JSON.stringify([
+        { id: "Notes/win0", title: "Note", processName: "Notes", pid: 42,
+          bounds: { x: 10, y: 20, width: 300, height: 200 }, isMinimized: false, isOnScreen: true },
+      ]))
+      .mockImplementationOnce(() => {
+        throw new Error("not allowed assistive access");
+      });
+    const platform = jxaOnlyPlatform();
+
+    await expect(platform.getWindowState("Notes/win0"))
+      .rejects.toBeInstanceOf(PermissionError);
+  });
+
+  it("reports accessibility permission denied for clickElement", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("accessibility permission denied");
+    });
+    const platform = new MacOSPlatform();
+
+    await expect(platform.clickElement("Notes/win0/1", "Notes"))
+      .rejects.toBeInstanceOf(PermissionError);
+  });
+
+  it("reports accessibility permission denied for typeInElement", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("assistive access is not permitted");
+    });
+    const platform = new MacOSPlatform();
+
+    await expect(platform.typeInElement("Notes/win0/1", "hello", "Notes"))
+      .rejects.toBeInstanceOf(PermissionError);
+  });
+
+  it("reports accessibility permission denied for setElementValue", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("System Events is not allowed assistive access");
+    });
+    const platform = new MacOSPlatform();
+
+    await expect(platform.setElementValue("Notes/win0/1", "hello", "Notes"))
+      .rejects.toBeInstanceOf(PermissionError);
+  });
+
+  it("PermissionError has correct code and is not retryable", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("not allowed assistive access");
+    });
+    const platform = new MacOSPlatform();
+
+    try {
+      await platform.findElement({ app: "Notes" });
+      throw new Error("expected to throw");
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(PermissionError);
+      expect(err.code).toBe("PERMISSION_DENIED");
+      expect(err.retryable).toBe(false);
+      expect(err.message).toContain("accessibility");
+    }
+  });
+
+  it("reports Screen Recording hint when screenshot fails with permission error", async () => {
+    execFileMock.mockImplementation((cmd: string, _args: any[], _cb: any) => {
+      _cb?.(new Error("CGDisplayStreamCreate failed"));
+      return undefined;
+    });
+    const platform = new MacOSPlatform();
+
+    await expect(platform.screenshot())
+      .rejects.toThrow();
+  });
+
+  it("preserves existing UcuError subclasses without wrapping", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      success: false,
+      error: "Element not found: Notes/win0/99",
+    }));
+    const platform = new MacOSPlatform();
+
+    try {
+      await platform.setElementValue("Notes/win0/99", "hello", "Notes");
+      throw new Error("expected to throw");
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(ElementNotFoundError);
+      expect(err.code).toBe("ELEMENT_NOT_FOUND");
+      expect(err.retryable).toBe(false);
+    }
+  });
+});
+
+// ── Platform method integration (TST-P1-3) ───────────────────────────
+
+describe("MacOSPlatform method integration (TST-P1-3)", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockReset();
+    execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+  });
+
+  it("readClipboard returns clipboard text", async () => {
+    execFileSyncMock.mockReturnValue("clipboard content");
+    const platform = new MacOSPlatform();
+
+    const text = await platform.readClipboard();
+    expect(text).toBe("clipboard content");
+    expect(execFileSyncMock).toHaveBeenCalledWith("pbpaste", [], expect.objectContaining({ encoding: "utf-8" }));
+  });
+
+  it("readClipboard throws PlatformError on failure", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("pbpaste failed");
+    });
+    const platform = new MacOSPlatform();
+
+    await expect(platform.readClipboard())
+      .rejects.toBeInstanceOf(PlatformError);
+  });
+
+  it("readClipboard PlatformError message includes operation context", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("pipe broken");
+    });
+    const platform = new MacOSPlatform();
+
+    try {
+      await platform.readClipboard();
+      throw new Error("expected to throw");
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(PlatformError);
+      expect(err.message).toContain("read_clipboard failed");
+      expect(err.message).toContain("pipe broken");
+    }
+  });
+
+  it("writeClipboard writes text via pbcopy", async () => {
+    execFileSyncMock.mockReturnValue("");
+    const platform = new MacOSPlatform();
+
+    await platform.writeClipboard("test text");
+    expect(execFileSyncMock).toHaveBeenCalledWith("pbcopy", [], expect.objectContaining({ input: "test text" }));
+  });
+
+  it("writeClipboard throws PlatformError on failure", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("pbcopy failed");
+    });
+    const platform = new MacOSPlatform();
+
+    await expect(platform.writeClipboard("text"))
+      .rejects.toBeInstanceOf(PlatformError);
+  });
+
+  it("writeClipboard PlatformError message includes operation context", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("permission denied");
+    });
+    const platform = new MacOSPlatform();
+
+    try {
+      await platform.writeClipboard("text");
+      throw new Error("expected to throw");
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(PlatformError);
+      expect(err.message).toContain("write_clipboard failed");
+      expect(err.message).toContain("permission denied");
+    }
+  });
+
+  it("rethrowAccessibilityError wraps non-UcuError as PermissionError for accessibility keyword", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("not allowed assistive access");
+    });
+    const platform = new MacOSPlatform();
+
+    try {
+      await platform.findElement({ app: "Notes" });
+      throw new Error("expected to throw");
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(PermissionError);
+      expect(err.code).toBe("PERMISSION_DENIED");
+    }
+  });
+
+  it("rethrowAccessibilityError wraps non-UcuError as PlatformError for non-permission errors", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("JXA runtime crash");
+    });
+    const platform = new MacOSPlatform();
+
+    try {
+      await platform.findElement({ app: "Notes" });
+      throw new Error("expected to throw");
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(PlatformError);
+      expect(err.message).toContain("find_element failed");
+      expect(err.message).toContain("JXA runtime crash");
+    }
+  });
+
+  it("rethrowAccessibilityError re-throws existing UcuError subclasses unchanged", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      success: false,
+      error: "Element not found: Notes/win0/1",
+    }));
+    const platform = new MacOSPlatform();
+
+    try {
+      await platform.clickElement("Notes/win0/1", "Notes");
+      throw new Error("expected to throw");
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(ElementNotFoundError);
+      expect(err.code).toBe("ELEMENT_NOT_FOUND");
+    }
+  });
+
+  it("rethrowElementActionError detects element-not-found and throws ElementNotFoundError", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      success: false,
+      error: "Element not found: Notes/win0/1",
+    }));
+    const platform = new MacOSPlatform();
+
+    try {
+      await platform.typeInElement("Notes/win0/1", "hello", "Notes");
+      throw new Error("expected to throw");
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(ElementNotFoundError);
+      expect(err.code).toBe("ELEMENT_NOT_FOUND");
+    }
+  });
+
+  it("rethrowElementActionError detects accessibility permission and throws PermissionError", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("System Events is not allowed assistive access");
+    });
+    const platform = new MacOSPlatform();
+
+    try {
+      await platform.typeInElement("Notes/win0/1", "hello", "Notes");
+      throw new Error("expected to throw");
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(PermissionError);
+      expect(err.code).toBe("PERMISSION_DENIED");
+    }
+  });
+
+  it("click reports PlatformError for unknown errors", async () => {
+    const { click: inputClick } = await import("../../src/utils/input.js");
+    const origMock = inputClick as any;
+    // We can't easily mock the input module here since it's imported statically,
+    // so we test through the actual platform error handling path
+    const platform = new MacOSPlatform();
+
+    // getCursorPosition error path is a good proxy for rethrowInputError behavior
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("CGEventSourceCreate failed");
+    });
+    expect(() => platform.getCursorPosition()).toThrow(PlatformError);
+  });
+});

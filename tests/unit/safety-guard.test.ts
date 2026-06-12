@@ -246,3 +246,99 @@ describe("OBSERVE_ACTIONS / INPUT_ACTIONS classification (M6.1)", () => {
     expect(explicitSkip.allowed).toBe(true);
   });
 });
+
+describe("clipboard injection safety (TST-P1-1)", () => {
+  it("blocks shell command substitution in clipboard_write", () => {
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    const result = guard.checkAction("clipboard_write", { text: "hello $(rm -rf /)" });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("suspicious typed text");
+  });
+
+  it("blocks shell backtick substitution in clipboard_write", () => {
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    const result = guard.checkAction("clipboard_write", { text: "result=`whoami`" });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("suspicious typed text");
+  });
+
+  it("blocks shell command chaining in clipboard_write", () => {
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    const result = guard.checkAction("clipboard_write", { text: "echo hello && rm -rf /" });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("suspicious typed text");
+  });
+
+  it("blocks piping into an interpreter in clipboard_write", () => {
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    const result = guard.checkAction("clipboard_write", { text: "data | bash" });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("suspicious typed text");
+  });
+
+  it("blocks dangerous shell commands in clipboard_write", () => {
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    const result = guard.checkAction("clipboard_write", { text: "sudo rm -rf /important" });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("suspicious typed text");
+  });
+
+  it("blocks JXA injection primitives in clipboard_write", () => {
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    const result = guard.checkAction("clipboard_write", { text: "ObjC.import('Foundation')" });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("suspicious typed text");
+  });
+
+  it("blocks AppleScript injection in clipboard_write", () => {
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    const result = guard.checkAction("clipboard_write", { text: "do shell script 'rm -rf /'" });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("suspicious typed text");
+  });
+
+  it("allows safe text in clipboard_write", () => {
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    const result = guard.checkAction("clipboard_write", { text: "Hello, world! This is safe text." });
+    expect(result.allowed).toBe(true);
+  });
+
+  it("allows clipboard_write with special characters that are not injection patterns", () => {
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    const result = guard.checkAction("clipboard_write", { text: "Price: $50.00 | Qty: 3" });
+    expect(result.allowed).toBe(true);
+  });
+
+  it("allows unsafe text scan to be disabled for clipboard_write", () => {
+    const guard = new SafetyGuard({ allowUnsafeText: true, rateLimitMs: 0 });
+    const result = guard.checkAction("clipboard_write", { text: "hello $(example)" });
+    expect(result.allowed).toBe(true);
+  });
+
+  it("clipboard_read is classified as observe action", () => {
+    expect(classifyAction("clipboard_read")).toBe("observe");
+  });
+
+  it("clipboard_write is classified as input action", () => {
+    expect(classifyAction("clipboard_write")).toBe("input");
+  });
+
+  it("clipboard_read skips user activity pause", () => {
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    guard.setUserActivityPauseMs(5000);
+    guard.recordUserActivity();
+
+    const result = guard.checkAction("clipboard_read", {}, { skipUserActivityPause: true });
+    expect(result.allowed).toBe(true);
+  });
+
+  it("clipboard_write respects user activity pause", () => {
+    const guard = new SafetyGuard({ rateLimitMs: 0 });
+    guard.setUserActivityPauseMs(5000);
+    guard.recordUserActivity();
+
+    const result = guard.checkAction("clipboard_write", { text: "safe" });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("User activity detected");
+  });
+});
