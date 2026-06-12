@@ -9,6 +9,7 @@ export interface ScreenSize {
   width: number;
   height: number;
   scaleFactor?: number;
+  estimated?: boolean;
 }
 
 export interface ScreenshotOptions {

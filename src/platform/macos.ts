@@ -5,6 +5,7 @@ import type { Platform, ScreenRegion, ScreenSize, CursorPosition, WindowInfo, Wi
 import { captureFullScreen, captureRegion } from "../utils/screenshot.js";
 import { click as inputClick, doubleClick as inputDoubleClick, move as inputMove, drag as inputDrag, scroll as inputScroll, typeText, pressShortcut } from "../utils/input.js";
 import { CaptureError, ElementNotFoundError, InputSynthesisError, PermissionError, PlatformError, TargetStaleError, UcuError, WindowNotFoundError } from "../util/errors.js";
+import { logger } from "../util/logger.js";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -243,8 +244,9 @@ export class MacOSPlatform implements Platform {
         JSON.stringify({width:Math.round(frame.size.width),height:Math.round(frame.size.height),scaleFactor:scaleFactor})`,
       ], { encoding: "utf-8", timeout: 5000 }).trim();
       return JSON.parse(out) as ScreenSize;
-    } catch {
-      return { width: 1920, height: 1080, scaleFactor: 2 };
+    } catch (error) {
+      logger.warn("getScreenSize failed, using fallback", { error: errorMessage(error) });
+      return { width: 1920, height: 1080, scaleFactor: 2, estimated: true };
     }
   }
 
@@ -286,11 +288,15 @@ export class MacOSPlatform implements Platform {
       }
       JSON.stringify(result);
     `;
-    const out = execFileSync("osascript", [
-      "-l", "JavaScript",
-      "-e", jxaScript,
-    ], { encoding: "utf-8", timeout: 10000 }).trim();
-    return JSON.parse(out) as AppInfo[];
+    try {
+      const out = execFileSync("osascript", [
+        "-l", "JavaScript",
+        "-e", jxaScript,
+      ], { encoding: "utf-8", timeout: 10000 }).trim();
+      return JSON.parse(out) as AppInfo[];
+    } catch (error) {
+      rethrowAccessibilityError(error, "list_apps");
+    }
   }
 
   async focusApp(app: string): Promise<AppTarget> {
@@ -529,11 +535,15 @@ export class MacOSPlatform implements Platform {
         JSON.stringify(result);
       `;
 
-      const jxaOut = execFileSync("osascript", [
-        "-l", "JavaScript",
-        "-e", jxaScript
-      ], { encoding: "utf-8", timeout: 15000 });
-      return JSON.parse(jxaOut.trim()) as WindowInfo[];
+      try {
+        const jxaOut = execFileSync("osascript", [
+          "-l", "JavaScript",
+          "-e", jxaScript
+        ], { encoding: "utf-8", timeout: 15000 });
+        return JSON.parse(jxaOut.trim()) as WindowInfo[];
+      } catch (error) {
+        rethrowAccessibilityError(error, "list_windows_jxa");
+      }
   }
 
   async getWindowState(windowId?: string, depth?: number, includeBounds: boolean = true): Promise<WindowState> {
