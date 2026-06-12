@@ -47,11 +47,15 @@ const captureAfterFields = {
   captureFormat: z.enum(["png", "jpeg"]).default("jpeg").describe("Format for the post-action screenshot"),
 };
 
-// Exported so unit tests can pin the schema constraint directly instead
-// of going through the McpServer wrapper (which `handler()` calls
-// bypass). (Herschel review Major: 0.3.5's value='' test was a
-// tautology because it re-created a local zod schema instead of
-// asserting against this one.)
+/**
+ * Exported so unit tests can pin the schema constraint directly instead
+ * of going through the McpServer wrapper (which `handler()` calls
+ * bypass). (Herschel review Major: 0.3.5's value='' test was a
+ * tautology because it re-created a local zod schema instead of
+ * asserting against this one.)
+ *
+ * @internal Not part of the public API — may change without a semver bump.
+ */
 export const findElementInputSchema = {
   text: z.string().optional().describe("Text to search"),
   role: z.string().optional().describe("AX role"),
@@ -71,6 +75,43 @@ async function resolvePoint(x: number, y: number, windowId?: string): Promise<{ 
   const win = (await getPlatform().listWindows()).find(w => w.id === windowId);
   if (!win) throw new WindowNotFoundError(windowId);
   return { x: win.bounds.x + x, y: win.bounds.y + y };
+}
+
+/**
+ * Build safety context (window title + URL) for the current active target.
+ *
+ * The SafetyGuard's window-skip and URL blocklist checks are dead code unless
+ * tool handlers pass `windowTitle` / `url` in the `params` object. This helper
+ * resolves both from the active target so each action tool can spread the
+ * result into its `withSafety` call with minimal overhead.
+ */
+async function getSafetyContext(windowId?: string): Promise<{ windowTitle?: string; url?: string }> {
+  const target = activeTargetContext;
+  const effectiveWindowId = windowId ?? target?.windowId;
+
+  let windowTitle: string | undefined;
+  if (effectiveWindowId) {
+    try {
+      const windows = await getPlatform().listWindows();
+      const win = windows.find(w => w.id === effectiveWindowId);
+      windowTitle = win?.title;
+    } catch { /* best effort */ }
+  }
+  if (!windowTitle && target?.title) {
+    windowTitle = target.title;
+  }
+
+  let url: string | undefined;
+  const platform = getPlatform();
+  if (platform.getActiveBrowserContext) {
+    try {
+      const appName = target?.appName;
+      const ctx = await platform.getActiveBrowserContext(appName);
+      url = ctx?.url;
+    } catch { /* best effort */ }
+  }
+
+  return { windowTitle, url };
 }
 
 type ToolContent =
@@ -115,7 +156,7 @@ function errorDetails(error: unknown): Record<string, unknown> {
   // Some platform errors carry an inline `hint` field (added by macos.ts focusApp
   // for the Electron AX case, etc.). Surface it under `hint` so the model can
   // see remediation without parsing the message string.
-  const inlineHint = (err as Error & { hint?: unknown }).hint;
+  const inlineHint = err instanceof UcuError ? err.hint : undefined;
   const details: Record<string, unknown> = {
     name: err.name,
     code,
@@ -123,7 +164,7 @@ function errorDetails(error: unknown): Record<string, unknown> {
     message: err.message,
     recovery: recoveryHint(code),
   };
-  if (typeof inlineHint === "string" && inlineHint.length > 0) {
+  if (inlineHint) {
     details.hint = inlineHint;
   }
   return details;
@@ -402,7 +443,6 @@ export function registerTools(server: McpServer): void {
     if (windows.length === 0) {
       let accessibility: "granted" | "denied" | "unknown" = "unknown";
       try {
-        const { checkPermission } = await import("../safety/permissions.js");
         const { granted } = await checkPermission("accessibility");
         accessibility = granted ? "granted" : "denied";
       } catch { /* keep unknown */ }
@@ -448,7 +488,8 @@ export function registerTools(server: McpServer): void {
     ...captureAfterFields,
   }, async (params) => {
     const pt = await resolvePoint(params.x, params.y, params.windowId);
-    await withSafety<void>({ action: "click", params: { x: pt.x, y: pt.y }, requiresAccessibility: true, execute: () => getPlatform().click(pt.x, pt.y, params.button) });
+    const safetyCtx = await getSafetyContext(params.windowId);
+    await withSafety<void>({ action: "click", params: { x: pt.x, y: pt.y, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().click(pt.x, pt.y, params.button) });
     return actionResponse("click", { clicked: true, x: pt.x, y: pt.y }, { x: pt.x, y: pt.y, windowId: params.windowId }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("click");
@@ -460,7 +501,8 @@ export function registerTools(server: McpServer): void {
     ...captureAfterFields,
   }, async (params) => {
     const pt = await resolvePoint(params.x, params.y, params.windowId);
-    await withSafety<void>({ action: "click", params: { x: pt.x, y: pt.y, doubleClick: true }, requiresAccessibility: true, execute: () => getPlatform().click(pt.x, pt.y, params.button, true) });
+    const safetyCtx = await getSafetyContext(params.windowId);
+    await withSafety<void>({ action: "click", params: { x: pt.x, y: pt.y, doubleClick: true, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().click(pt.x, pt.y, params.button, true) });
     return actionResponse("double_click", { doubleClicked: true, x: pt.x, y: pt.y }, { x: pt.x, y: pt.y, windowId: params.windowId }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("double_click");
@@ -471,7 +513,8 @@ export function registerTools(server: McpServer): void {
     ...captureAfterFields,
   }, async (params) => {
     if (params.windowId) throw new UnsupportedParameterError("windowId-targeted keyboard typing is not implemented");
-    await withSafety<void>({ action: "type_text", params: { text: params.text }, requiresAccessibility: true, execute: () => getPlatform().type(params.text, params.delay) });
+    const safetyCtx = await getSafetyContext();
+    await withSafety<void>({ action: "type_text", params: { text: params.text, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().type(params.text, params.delay) });
     return actionResponse("type_text", { typed: true, charCount: params.text.length }, {}, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("type_text");
@@ -489,7 +532,8 @@ export function registerTools(server: McpServer): void {
       ...(params.key ? [params.key] : []),
     ];
     if (keys.length === 0) throw new UnsupportedParameterError("press_key requires at least one key");
-    await withSafety<void>({ action: "press_key", params: { keys }, requiresAccessibility: true, execute: () => getPlatform().key(keys) });
+    const safetyCtx = await getSafetyContext();
+    await withSafety<void>({ action: "press_key", params: { keys, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().key(keys) });
     return actionResponse("press_key", { pressed: true, keys }, {}, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("press_key");
@@ -502,7 +546,8 @@ export function registerTools(server: McpServer): void {
   }, async (params) => {
     const pt = await resolvePoint(params.x, params.y, params.windowId);
     const deltaX = params.deltaX ?? 0;
-    await withSafety<void>({ action: "scroll", params: { x: pt.x, y: pt.y }, requiresAccessibility: true, execute: () => getPlatform().scroll(pt.x, pt.y, deltaX, params.deltaY) });
+    const safetyCtx = await getSafetyContext(params.windowId);
+    await withSafety<void>({ action: "scroll", params: { x: pt.x, y: pt.y, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().scroll(pt.x, pt.y, deltaX, params.deltaY) });
     return actionResponse("scroll", { scrolled: true, x: pt.x, y: pt.y }, { x: pt.x, y: pt.y, windowId: params.windowId }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("scroll");
@@ -517,7 +562,8 @@ export function registerTools(server: McpServer): void {
   }, async (params) => {
     const start = await resolvePoint(params.startX, params.startY, params.windowId);
     const end = await resolvePoint(params.endX, params.endY, params.windowId);
-    await withSafety<void>({ action: "drag", params: { startX: start.x, startY: start.y, endX: end.x, endY: end.y }, requiresAccessibility: true, execute: () => getPlatform().drag(start.x, start.y, end.x, end.y, params.button, params.duration) });
+    const safetyCtx = await getSafetyContext(params.windowId);
+    await withSafety<void>({ action: "drag", params: { startX: start.x, startY: start.y, endX: end.x, endY: end.y, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().drag(start.x, start.y, end.x, end.y, params.button, params.duration) });
     return actionResponse("drag", { dragged: true, startX: start.x, startY: start.y, endX: end.x, endY: end.y }, { startX: start.x, startY: start.y, endX: end.x, endY: end.y, windowId: params.windowId }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("drag");
@@ -539,7 +585,7 @@ export function registerTools(server: McpServer): void {
     //  - global install via npm: argv[1] is in $(npm root -g)/ucu-mcp/...
     //  - npx: argv[1] is in ~/.npm/_npx/.../node_modules/ucu-mcp/...
     //  - bin/ucu-mcp.js is the entry; dist/src/*/tools.js is the module path
-    function resolveHelperPath(relParts: string[]): { path: string | null; tried: string[] } {
+    function resolveHelperPath(relParts: string[]): { path: string | null; tried: readonly string[] } {
       const tried: string[] = [];
       const tryPaths: string[] = [];
       const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -577,18 +623,18 @@ export function registerTools(server: McpServer): void {
     }
 
     let nativeHelpers:
-      | { cgevent: { ok: boolean; path: string | null; tried: string[] };
-          ocr: { ok: boolean; path: string | null; tried: string[] };
-          windowlist: { ok: boolean; path: string | null; tried: string[] } }
+      | { cgevent: { ok: boolean; path: string | null; tried: readonly string[] };
+          ocr: { ok: boolean; path: string | null; tried: readonly string[] };
+          windowlist: { ok: boolean; path: string | null; tried: readonly string[] } }
       | undefined;
     if (process.platform === "darwin") {
       const cgevent = resolveHelperPath(["native", "cgevent", "cgevent-helper"]);
       const ocr = resolveHelperPath(["native", "ocr", "ocr-helper"]);
       const windowlist = resolveHelperPath(["native", "windowlist", "windowlist-helper"]);
       nativeHelpers = {
-        cgevent: { ok: cgevent.path !== null, path: cgevent.path, tried: cgevent.tried.slice(0, 3) },
-        ocr: { ok: ocr.path !== null, path: ocr.path, tried: ocr.tried.slice(0, 3) },
-        windowlist: { ok: windowlist.path !== null, path: windowlist.path, tried: windowlist.tried.slice(0, 3) },
+        cgevent: { ok: cgevent.path !== null, path: cgevent.path, tried: cgevent.tried },
+        ocr: { ok: ocr.path !== null, path: ocr.path, tried: ocr.tried },
+        windowlist: { ok: windowlist.path !== null, path: windowlist.path, tried: windowlist.tried },
       };
     }
 
@@ -767,16 +813,33 @@ export function registerTools(server: McpServer): void {
     ...captureAfterFields,
   }, async (params) => {
     const pt = await resolvePoint(params.x, params.y, params.windowId);
-    await withSafety<void>({ action: "move", params: { x: pt.x, y: pt.y }, requiresAccessibility: true, execute: () => getPlatform().move(pt.x, pt.y) });
+    const safetyCtx = await getSafetyContext(params.windowId);
+    await withSafety<void>({ action: "move", params: { x: pt.x, y: pt.y, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().move(pt.x, pt.y) });
     return actionResponse("move", { moved: true, x: pt.x, y: pt.y }, { x: pt.x, y: pt.y, windowId: params.windowId }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("move");
 
   registerTool("find_element", "Find accessibility elements by text, role, or value. Supports value/index/near selectors.", findElementInputSchema, async (params) => {
     const effectiveApp = params.app || getActiveTarget()?.appName;
-    const response = await withSafety<FindElementResponse>({ action: "find_element", params: {}, requiresAccessibility: true,
+    const safetyCtx = await getSafetyContext(params.windowId);
+    const response = await withSafety<FindElementResponse>({ action: "find_element", params: { ...safetyCtx }, requiresAccessibility: true,
       execute: () => getPlatform().findElement({ text: params.text, role: params.role, app: effectiveApp, depth: params.depth, includeBounds: params.includeBounds, maxResults: params.maxResults, textMode: params.textMode, visibleOnly: params.visibleOnly, value: params.value, index: params.index, near: params.near }) });
-    return { content: [{ type: "text", text: JSON.stringify({ results: response.results, metrics: response.metrics }, null, 2) }] };
+    const payload: Record<string, unknown> = { results: response.results, metrics: response.metrics };
+    // When find_element returns 0 results AND scannedCount is 0 for a specific
+    // app, the AX tree is empty — the most common cause is Electron / Chromium
+    // apps whose AX tree is not exposed to System Events. Attach a pixel-level
+    // fallback hint so the model can proceed via screenshot + ocr + click
+    // instead of retrying find_element forever.
+    if (response.results.length === 0 && effectiveApp && response.metrics.scannedCount === 0) {
+      payload.hint =
+        `${effectiveApp} returned 0 AX elements (scannedCount=0, meaning the AX tree is empty). ` +
+        "This is typical for Electron/Chromium apps whose AX tree is not exposed to System Events. " +
+        "Pixel-level workaround: call screenshot to capture the screen, then ocr to locate " +
+        "the target UI text and get its bounding box coordinates, then click(x, y) at those " +
+        "screen coordinates. Alternatively, use type_text or press_key for keyboard-based " +
+        "interaction, or modify the app's config file or database directly.";
+    }
+    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
   });
   registry.register("find_element");
 
@@ -784,7 +847,8 @@ export function registerTools(server: McpServer): void {
     elementId: z.string().describe("AX element identifier"), app: z.string().optional().describe("Target app"), ...captureAfterFields,
   }, async (params) => {
     const effectiveApp = params.app || getActiveTarget()?.appName;
-    await withSafety<void>({ action: "click_element", params: {}, requiresAccessibility: true, execute: () => getPlatform().clickElement(params.elementId, effectiveApp) });
+    const safetyCtx = await getSafetyContext();
+    await withSafety<void>({ action: "click_element", params: { ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().clickElement(params.elementId, effectiveApp) });
     return actionResponse("click_element", { clicked: true, elementId: params.elementId }, { elementId: params.elementId, app: effectiveApp }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("click_element");
@@ -793,7 +857,8 @@ export function registerTools(server: McpServer): void {
     elementId: z.string().describe("AX element identifier"), value: z.string().describe("Value to set"), app: z.string().optional().describe("Target app"), ...captureAfterFields,
   }, async (params) => {
     const effectiveApp = params.app || getActiveTarget()?.appName;
-    await withSafety<void>({ action: "set_value", params: { value: params.value }, requiresAccessibility: true, execute: () => getPlatform().setElementValue!(params.elementId, params.value, effectiveApp) });
+    const safetyCtx = await getSafetyContext();
+    await withSafety<void>({ action: "set_value", params: { value: params.value, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().setElementValue!(params.elementId, params.value, effectiveApp) });
     return actionResponse("set_value", { setValue: true, elementId: params.elementId }, { elementId: params.elementId, app: effectiveApp }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("set_value");
@@ -803,7 +868,8 @@ export function registerTools(server: McpServer): void {
     app: z.string().optional().describe("Target app"), clearFirst: z.boolean().optional().describe("Clear existing text before typing"), ...captureAfterFields,
   }, async (params) => {
     const effectiveApp = params.app || getActiveTarget()?.appName;
-    await withSafety<void>({ action: "type_in_element", params: { text: params.text }, requiresAccessibility: true, execute: () => getPlatform().typeInElement(params.elementId, params.text, effectiveApp, params.clearFirst) });
+    const safetyCtx = await getSafetyContext();
+    await withSafety<void>({ action: "type_in_element", params: { text: params.text, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().typeInElement(params.elementId, params.text, effectiveApp, params.clearFirst) });
     return actionResponse("type_in_element", { typed: true, elementId: params.elementId, charCount: params.text.length }, { elementId: params.elementId, app: effectiveApp }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
   registry.register("type_in_element");
