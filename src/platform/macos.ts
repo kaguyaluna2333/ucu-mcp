@@ -194,8 +194,9 @@ export class MacOSPlatform implements Platform {
     if (!this.savedFocus) return;
     try {
       const { appName } = this.savedFocus;
+      const appNameLiteral = JSON.stringify(appName);
       execFileSync("osascript", [
-        "-e", `tell application "${appName}" to activate`,
+        "-e", `tell application ${appNameLiteral} to activate`,
       ], { timeout: 5000 });
     } catch {
       // Best effort — don't fail the action if restore fails
@@ -255,7 +256,8 @@ export class MacOSPlatform implements Platform {
       });
       return /"IOConsoleLocked"\s*=\s*Yes/.test(out);
     } catch {
-      return false;
+      // Fail-closed: if we can't determine lock state, assume locked
+      return true;
     }
   }
 
@@ -292,7 +294,7 @@ export class MacOSPlatform implements Platform {
   }
 
   async focusApp(app: string): Promise<AppTarget> {
-    const escapedApp = app.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const appLiteral = JSON.stringify(app);
     this.windowCache = undefined;
     // NOTE: We intentionally do NOT call AppleScript "activate" here.
     // focus_app sets the internal target context so subsequent operations
@@ -320,8 +322,7 @@ export class MacOSPlatform implements Platform {
       // bare WindowNotFoundError("CC Switch") was indistinguishable from
       // "the app is not running", which led models to retry forever.
       this.activeTarget = undefined; // Clear stale target on focus failure
-      const err = new WindowNotFoundError(app);
-      (err as Error & { hint?: string }).hint =
+      const err = new WindowNotFoundError(app, { hint:
         "list_windows returned no match for this app. If the app is running, " +
         "the most likely cause is that it is an Electron app whose AX tree is " +
         "not exposed to System Events (System Settings > Privacy & Security > " +
@@ -329,7 +330,7 @@ export class MacOSPlatform implements Platform {
         "to the host terminal). Pixel-level workaround: call screenshot to " +
         "capture the screen, then ocr to locate UI text and get its bounding " +
         "box coordinates, then click(x, y) at those screen coordinates. " +
-        "Alternatively, modify the app's config file or database directly.";
+        "Alternatively, modify the app's config file or database directly." });
       throw err;
     }
     this.activeTarget = {
@@ -360,10 +361,10 @@ export class MacOSPlatform implements Platform {
     ].some((name) => normalized.includes(name));
     if (!knownBrowser) return undefined;
 
-    const escapedApp = appName.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+    const appLiteral = JSON.stringify(appName);
     const jxaScript = `
       function run() {
-        var appName = "${escapedApp}";
+        var appName = ${appLiteral};
         try {
           var app = Application(appName);
           var url = "";
@@ -545,7 +546,7 @@ export class MacOSPlatform implements Platform {
     }
     const maxDepth = Math.min(depth || 3, 10);
     const maxElements = 50;
-    const escapedWindowId = resolvedWindowId.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+    const windowIdLiteral = JSON.stringify(resolvedWindowId);
     const targetWindow = (await this.listWindows(true)).find((w) => w.id === resolvedWindowId);
     const targetJson = JSON.stringify(targetWindow ?? null);
 
@@ -568,7 +569,7 @@ export class MacOSPlatform implements Platform {
 
         function windowMatches(win, proc) {
           if (!target) {
-            try { return String(win.id()) === String("${escapedWindowId}"); } catch(e) { return false; }
+            try { return String(win.id()) === String(${windowIdLiteral}); } catch(e) { return false; }
           }
           try {
             if (target.pid && proc.unixId && proc.unixId() !== target.pid) return false;
@@ -588,7 +589,7 @@ export class MacOSPlatform implements Platform {
               closeEnough(size[1], b.height, 24);
           } catch(e) {}
 
-          try { return String(win.id()) === String("${escapedWindowId}"); } catch(e) {}
+          try { return String(win.id()) === String(${windowIdLiteral}); } catch(e) {}
           return false;
         }
 
@@ -596,7 +597,7 @@ export class MacOSPlatform implements Platform {
         var foundProc = null;
 
         // Fast path: resolve "ProcessName/winN" format directly
-        var idParts = "${escapedWindowId}".split('/');
+        var idParts = ${windowIdLiteral}.split('/');
         if (idParts.length >= 2 && idParts[0]) {
           var procName = idParts[0];
           var winIdx = 0;
@@ -637,7 +638,7 @@ export class MacOSPlatform implements Platform {
           var winPos = foundWin.position();
           var winSize = foundWin.size();
           result.window = {
-            id: String("${escapedWindowId}"),
+            id: String(${windowIdLiteral}),
             title: foundWin.name() || '',
             processName: foundProc.name() || '',
             pid: foundProc.unixId ? foundProc.unixId() : 0,
@@ -893,7 +894,7 @@ export class MacOSPlatform implements Platform {
   }
 
   private async ocrJxa(tmpPath: string, screenSize: ScreenSize, scaleFactor: number, region: ScreenRegion | undefined, buf: Buffer): Promise<OcrResult> {
-    const escapedPath = tmpPath.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, "\\`").replace(/$/g, "\\$");
+    const pathLiteral = JSON.stringify(tmpPath);
     const jxaScript = `
       function run() {
         ObjC.import('Vision');
@@ -901,7 +902,7 @@ export class MacOSPlatform implements Platform {
         ObjC.import('Foundation');
         var app = Application.currentApplication();
         app.includeStandardAdditions = true;
-        var path = "${escapedPath}";
+        var path = ${pathLiteral};
         var url = $.NSURL.fileURLWithPath(path);
         var image = $.NSImage.alloc.initWithContentsOfURL(url);
         if (!image || !image.isValid) {
@@ -991,10 +992,10 @@ export class MacOSPlatform implements Platform {
     const effectiveApp = app || this.activeTarget?.appName;
     const maxDepth = Math.min(depth || 5, 10);
     const maxResults = Math.min(Math.max(options.maxResults ?? 50, 1), 200);
-    const escapedApp = (effectiveApp || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
-    const escapedText = text ? text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$') : "";
-    const escapedRole = role ? role.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$') : "";
-    const escapedValue = value ? value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$') : "";
+    const appLiteral = JSON.stringify(effectiveApp || "");
+    const textLiteral = text ? JSON.stringify(text) : "null";
+    const roleLiteral = role ? JSON.stringify(role) : "null";
+    const valueLiteral = value ? JSON.stringify(value) : "null";
 
     // Pre-compile regex on TS side to validate syntax before passing to JXA
     if (text && textMode === "regex") {
@@ -1031,11 +1032,11 @@ export class MacOSPlatform implements Platform {
       var maxResults = ${maxResults};
       var includeBounds = ${includeBounds ? "true" : "false"};
       var visibleOnly = ${visibleOnly ? "true" : "false"};
-      var textMode = "${textMode}";
+      var textMode = ${JSON.stringify(textMode)};
 
-      var textFilter = ${text ? `"${escapedText}"` : "null"};
-      var roleFilter = ${role ? `"${escapedRole}"` : "null"};
-      var valueFilter = ${value ? `"${escapedValue}"` : "null"};
+      var textFilter = ${textLiteral};
+      var roleFilter = ${roleLiteral};
+      var valueFilter = ${valueLiteral};
 
       function isVisible(elem) {
         try {
@@ -1172,11 +1173,11 @@ export class MacOSPlatform implements Platform {
       }
 
       try {
-        if ("${escapedApp}") {
-          var proc = se.processes["${escapedApp}"]();
+        if (${appLiteral}) {
+          var proc = se.processes[${appLiteral}]();
           var wins = proc.windows();
           for (var w = 0; w < wins.length && resultCount[0] < maxResults; w++) {
-            traverse(wins[w], "${escapedApp}/win" + w, 0);
+            traverse(wins[w], ${appLiteral} + "/win" + w, 0);
           }
         } else {
           var procs = se.processes();
@@ -1260,9 +1261,9 @@ export class MacOSPlatform implements Platform {
 
   async clickElement(elementId: string, app?: string): Promise<void> {
     this.evictExpiredCacheEntries();
-    const escapedElementId = elementId.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+    const elementIdLiteral = JSON.stringify(elementId);
     const effectiveApp = app || this.activeTarget?.appName;
-    const escapedApp = (effectiveApp || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+    const appLiteral = JSON.stringify(effectiveApp || "");
     const cached = this.elementCache.get(elementId);
     if (cached && this.isCacheEntryExpired(cached)) {
       this.elementCache.delete(elementId);
@@ -1277,8 +1278,8 @@ export class MacOSPlatform implements Platform {
           try { return elem.elements(); } catch(e2) { return []; }
         }
       }
-      var elemPath = "${escapedElementId}";
-      var appName = "${escapedApp}";
+      var elemPath = ${elementIdLiteral};
+      var appName = ${appLiteral};
       var cached = ${cachedJson};
 
       function resolveElementByFullPath(path) {
@@ -1495,10 +1496,10 @@ export class MacOSPlatform implements Platform {
 
   async typeInElement(elementId: string, text: string, app?: string, clearFirst?: boolean): Promise<void> {
     this.evictExpiredCacheEntries();
-    const escapedText = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+    const textLiteral = JSON.stringify(text);
     const effectiveApp = app || this.activeTarget?.appName;
-    const escapedApp = (effectiveApp || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
-    const escapedElementId = elementId.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+    const appLiteral = JSON.stringify(effectiveApp || "");
+    const elementIdLiteral = JSON.stringify(elementId);
     const cached = this.elementCache.get(elementId);
     if (cached && this.isCacheEntryExpired(cached)) {
       this.elementCache.delete(elementId);
@@ -1513,9 +1514,9 @@ export class MacOSPlatform implements Platform {
           try { return elem.elements(); } catch(e2) { return []; }
         }
       }
-      var elemPath = "${escapedElementId}";
-      var appName = "${escapedApp}";
-      var textToType = "${escapedText}";
+      var elemPath = ${elementIdLiteral};
+      var appName = ${appLiteral};
+      var textToType = ${textLiteral};
       var shouldClear = ${clearFirst ? "true" : "false"};
       var cached = ${cachedJson};
 

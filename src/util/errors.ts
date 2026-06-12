@@ -15,11 +15,14 @@ export class UcuError extends Error {
   static readonly defaultCode: string = "UCU_ERROR";
   readonly code: string;
   readonly retryable: boolean;
+  /** Optional inline remediation hint surfaced by the platform layer. */
+  readonly hint?: string;
 
   constructor(
     message: string,
     code?: string,
     retryable: boolean = false,
+    hint?: string,
   ) {
     super(message);
     if (code === undefined) {
@@ -30,15 +33,17 @@ export class UcuError extends Error {
     this.name = this.constructor.name;
     this.code = code;
     this.retryable = retryable;
+    this.hint = hint;
   }
 
   /** Serialize for MCP response / JSON.stringify. */
-  toJSON(): { name: string; code: string; retryable: boolean; message: string } {
+  toJSON(): { name: string; code: string; retryable: boolean; message: string; hint?: string } {
     return {
       name: this.name,
       code: this.code,
       retryable: this.retryable,
       message: this.message,
+      ...(this.hint && { hint: this.hint }),
     };
   }
 }
@@ -101,11 +106,12 @@ function getPermissionMessage(permission: string, platform: string): string {
  */
 export class WindowNotFoundError extends UcuError {
   static override readonly defaultCode = "WINDOW_NOT_FOUND";
-  constructor(windowId: string) {
+  constructor(windowId: string, options?: { hint?: string }) {
     super(
       `Window ${windowId} not found. It may have been closed. Run list_windows to get fresh IDs.`,
       WindowNotFoundError.defaultCode,
       false,
+      options?.hint,
     );
   }
 }

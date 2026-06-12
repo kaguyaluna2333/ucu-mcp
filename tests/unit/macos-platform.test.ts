@@ -66,34 +66,19 @@ describe("MacOSPlatform", () => {
       .rejects.toBeInstanceOf(PlatformError);
   });
 
-  it("throws PlatformError with Invalid regex message when value is an invalid regex and textMode is regex", async () => {
-    // Regression test for the 0.3.2 commit that mirrored the text-side regex
-    // pre-validation onto the value side. If a future refactor silently
-    // drops the value-side throw, the user-visible regression is "no
-    // results returned" instead of a clear error — this test makes that
-    // impossible to ship unnoticed.
+  // Regression test for 0.3.2 regex pre-validation: the value-side guard was
+  // added in 0.3.2 (mirroring the existing text-side guard), and both paths
+  // must throw PlatformError with "Invalid regex pattern" instead of silently
+  // returning "no results". The value-side guard prevents the JXA try/catch
+  // from swallowing invalid regex; the text-side guard is the original that
+  // the 0.3.2 commit mirrored. (Consolidated from two separate tests in 0.4.1.)
+  it.each([
+    { field: "value" as const, label: "value-side (0.3.2 regression guard)" },
+    { field: "text" as const, label: "text-side (original guard, mirrored in 0.3.7)" },
+  ] as const)("throws PlatformError with Invalid regex message when $field is an invalid regex and textMode is regex ($label)", async ({ field }) => {
     const platform = new MacOSPlatform();
-
     try {
-      await platform.findElement({ value: "[", app: "Notes", textMode: "regex" });
-      throw new Error("expected to throw");
-    } catch (err: any) {
-      expect(err).toBeInstanceOf(PlatformError);
-      expect(String(err.message)).toMatch(/^Invalid regex pattern:/);
-    }
-  });
-
-  it("throws PlatformError with Invalid regex message when text is an invalid regex and textMode is regex", async () => {
-    // Mirror of the value-side test above, pinning that the text-side
-    // regex pre-validation also throws PlatformError with a clear
-    // "Invalid regex pattern" message. The value-side test was added
-    // in 0.3.2, but the text-side guard was the original behavior
-    // that the 0.3.2 commit mirrored; this test makes sure the
-    // original behavior cannot silently regress either. (0.3.7)
-    const platform = new MacOSPlatform();
-
-    try {
-      await platform.findElement({ text: "[", app: "Notes", textMode: "regex" });
+      await platform.findElement({ [field]: "[", app: "Notes", textMode: "regex" });
       throw new Error("expected to throw");
     } catch (err: any) {
       expect(err).toBeInstanceOf(PlatformError);
@@ -390,7 +375,7 @@ describe("MacOSPlatform", () => {
     const script = lastJxaScript();
     expect(script).toContain("var maxResults = 3;");
     expect(script).toContain("var includeBounds = false;");
-    expect(script).toContain('traverse(wins[w], "Notes/win" + w, 0);');
+    expect(script).toContain('traverse(wins[w], "Notes" + "/win" + w, 0);');
     expect(script).toContain("if (includeBounds) item.bounds = getBounds(elem);");
   });
 
@@ -491,7 +476,7 @@ describe("MacOSPlatform", () => {
     // near-sort bounds fallback. When every result is missing bounds,
     // the comparator must treat all entries as equal under the
     // "park to end" branch and preserve the original JXA order
-    // (Array.prototype.sort is stable in modern V8). Pinning this
+    // (Array.prototype.sort is stable in Node >= 12 / V8). Pinning this
     // prevents a future refactor from accidentally introducing a
     // non-stable comparator that scrambles all-no-bounds results.
     // (0.3.7)

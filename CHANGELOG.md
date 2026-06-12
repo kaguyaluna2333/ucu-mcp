@@ -5,7 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - 2026-06-11
+## [0.4.1] - 2026-06-11
+
+### Changed
+
+- `UcuError` base class now has a formal `hint?: string` field with serialization in `toJSON()`. Platform errors that carry remediation hints (e.g. `WindowNotFoundError` from `focusApp` for Electron apps) now pass the hint through the constructor instead of using duck-type property assignment. (Fox 0.3.8 M1)
+- `findElementInputSchema` export annotated with `@internal` — not part of the public API, may change without semver bump. (Raman 0.3.7 M4)
+- `list_windows` empty-result branch now uses the top-level `checkPermission` import instead of a per-call dynamic `import()`. (Fox 0.3.8 M2)
+- `doctor` `tried` arrays are now `readonly string[]` and no longer silently truncated via `.slice(0, 3)`. (Fox 0.3.8 N2/N3)
+- Text-side and value-side regex pre-validation tests consolidated into a single `it.each` parameterized case. (Raman 0.3.7 N2)
+
+### Fixed
+
+- `find_element` now attaches a pixel-level fallback hint when it returns 0 results AND `scannedCount === 0` for a specific app (meaning the AX tree is empty — common with Electron/Chromium apps). The hint directs the model to use `screenshot` + `ocr` + `click(x, y)` instead of retrying `find_element` forever.
+- CHANGELOG 0.3.7 `prepublishOnly` description now matches the actual script (`npx vitest run tests/unit/ && npm run build` instead of `npm test && npm run build`). (Raman 0.3.7 M2)
+- CHANGELOG 0.3.7 scope claim "corrected in both `src/platform/macos.ts` and this CHANGELOG" narrowed to "corrected in this CHANGELOG" — the source file was already correct. (Raman 0.3.7 M3)
+- CHANGELOG 0.3.5 duplicate "three fewer" / "two fewer" entry cleaned up — only the corrected "two fewer" version remains. (Raman 0.3.7 N4)
+- Test comment "modern V8" clarified to "Node >= 12 / V8" for the all-no-bounds near-sort test. (Raman 0.3.7 N1)
+
+### Tests
+
+- 225 unit tests pass (13 test files).
+- `macos`: value-side and text-side regex pre-validation tests consolidated into single `it.each` with preserved regression context.
+- Verified on Node v22.22.3 / macOS 26.6 (arm64).
 
 ### Fixed
 
@@ -43,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `find_element` value-schema test is no longer a tautology. The 0.3.6 release fixed a *symptom* of the bug (the old test called `handler()` directly, bypassing the McpServer schema-validation wrapper, and then asserted `r.isError === true` which was `undefined`); the underlying tautology remained: the test re-created a local `z.string().min(1).optional()` instead of exercising the real schema. 0.3.7 exports the actual `findElementInputSchema` from `src/mcp/tools.ts` and the test now imports it via `findElementInputSchema.value`, so the assertion genuinely pins the production schema. Pins the 0.3.2 commit `46d4ddd` semantic.
-- CHANGELOG/JXA `textMatches` comment math is now correct: 3 sources → 1 RegExp = **2 fewer** compilations per matched element. The 0.3.5/0.3.6 wording "three fewer" was off by one and has been corrected in both `src/platform/macos.ts` and this CHANGELOG.
+- CHANGELOG/JXA `textMatches` comment math is now correct: 3 sources → 1 RegExp = **2 fewer** compilations per matched element. The 0.3.5/0.3.6 wording "three fewer" was off by one and has been corrected in this CHANGELOG (the `src/platform/macos.ts` comment was already correct at that point).
 
 ### Tests
 
@@ -53,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Hygiene
 
 - `findElementInputSchema` is now a named export from `src/mcp/tools.ts` (with a JSDoc comment explaining why the schema is exported) so the unit test can assert the production schema directly instead of constructing a local copy.
-- Added `prepublishOnly` script to `package.json` that runs `npm test && npm run build` before `npm publish`. This is a structural guard against the yank rhythm that hit 0.3.3 and 0.3.5: a failed test or build will now block the publish at the npm level, not at the human level. (Raman review Minor #3)
+- Added `prepublishOnly` script to `package.json` that runs `npx vitest run tests/unit/ && npm run build` before `npm publish`. This is a structural guard against the yank rhythm that hit 0.3.3 and 0.3.5: a failed test or build will now block the publish at the npm level, not at the human level. (Raman review Minor #3)
 
 ## [0.3.5] - 2026-06-06  *(Yanked — see 0.3.6)*
 
@@ -65,7 +87,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- JXA `textMatches` regex branch now compiles the `RegExp` once per element instead of once per source (name / value / description) — three fewer compilations per matched element when `textMode="regex"`. The TS-side pre-validation in `findElement` guarantees the pattern is valid, so the `RegExp` constructor cannot throw here. (Herschel review perf Minor)
 - JXA `textMatches` regex branch now compiles the `RegExp` once per element instead of once per source (name / value / description) — **two** fewer compilations per matched element when `textMode="regex"` (corrected in 0.3.7; 0.3.5/0.3.6 said "three fewer" which was off by one: 3 sources → 1 regex = 2 saved). The TS-side pre-validation in `findElement` guarantees the pattern is valid, so the `RegExp` constructor cannot throw here. (Herschel review perf Minor)
 
 ### Fixed
