@@ -2,7 +2,7 @@
 
 import { startServer } from "../src/mcp/server.js";
 import { checkPermissions } from "../src/safety/permissions.js";
-import { MacOSPlatform } from "../src/platform/macos.js";
+import { MacOSPlatform } from "../src/platform/macos/index.js";
 
 async function runDoctor(): Promise<void> {
   const permissions = await checkPermissions();

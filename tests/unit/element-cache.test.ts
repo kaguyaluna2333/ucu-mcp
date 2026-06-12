@@ -8,7 +8,7 @@ vi.mock("node:child_process", () => ({
   execFileSync: execFileSyncMock,
 }));
 
-import { MacOSPlatform } from "../../src/platform/macos.js";
+import { MacOSPlatform } from "../../src/platform/macos/index.js";
 
 describe("MacOSPlatform element cache (AX refetch)", () => {
   beforeEach(() => {

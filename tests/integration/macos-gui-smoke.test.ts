@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MacOSPlatform } from "../../src/platform/macos.js";
+import { MacOSPlatform } from "../../src/platform/macos/index.js";
 import type { FindElementResult, FindElementResponse } from "../../src/platform/base.js";
 
 const runSmoke = process.platform === "darwin" && process.env.UCU_MACOS_GUI_SMOKE === "1";
