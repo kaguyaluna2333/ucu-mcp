@@ -27,7 +27,7 @@ const mockPlat = vi.hoisted(() => ({
   writeClipboard: vi.fn(),
 }));
 
-vi.mock("../../src/platform/macos.js", () => ({
+vi.mock("../../src/platform/macos/index.js", () => ({
   MacOSPlatform: class { [k: string]: any; constructor() { for (const [k, v] of Object.entries(mockPlat)) { this[k] = v; } } },
 }));
 
@@ -91,7 +91,7 @@ function defaults() {
 beforeAll(async () => {
   defaults();
   const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
-  const { registerTools, ToolRegistry } = await import("../../src/mcp/tools.js");
+  const { registerTools, ToolRegistry } = await import("../../src/mcp/tools/index.js");
   const server = new McpServer({ name: "ucu-mcp", version: "0.1.0" });
   const orig = server.tool.bind(server);
   (server as any).tool = function (name: string, desc: string, schema: unknown, handler: TH) {
@@ -246,7 +246,7 @@ describe("active target context", () => {
     // Pin the "empty string is not allowed" semantic that the 0.3.2 commit
     // introduced. (0.3.7: replaced local tautology schema with the real
     // exported one so this test actually exercises the production schema.)
-    const { findElementInputSchema } = await import("../../src/mcp/tools.js");
+    const { findElementInputSchema } = await import("../../src/mcp/tools/index.js");
     const valueSchema = findElementInputSchema.value;
     expect(valueSchema.safeParse("").success).toBe(false);
     expect(valueSchema.safeParse(undefined).success).toBe(true);
