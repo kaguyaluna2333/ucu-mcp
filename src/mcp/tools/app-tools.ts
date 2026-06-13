@@ -78,13 +78,12 @@ export function registerAppTools(registerTool: RegisterToolFn): void {
 
   registerTool("doctor", "Check system permissions, native helpers, and client readiness", {}, async () => {
     const { checkPermissions, getPermissionInstructions, getTerminalAppName } = await import("../../safety/permissions.js");
-    const { MacOSPlatform: MacPlat } = await import("../../platform/macos/index.js");
     const { existsSync, statSync } = await import("node:fs");
     const { join, dirname, resolve } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
     const { execFileSync } = await import("node:child_process");
     const permissions = await checkPermissions();
-    const screenLocked = process.platform === "darwin" ? new MacPlat().isScreenLocked?.() ?? false : false;
+    const screenLocked = getPlatform().isScreenLocked?.() ?? false;
     const termApp = process.platform === "darwin" ? getTerminalAppName() : undefined;
 
     function resolveHelperPath(relParts: string[]): { path: string | null; tried: readonly string[] } {
