@@ -27,7 +27,16 @@ function parseJsonRpcMessages(stdout: string): any[] {
     .trim()
     .split(/\n+/)
     .filter(Boolean)
-    .map((line) => JSON.parse(line));
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        // The line may be split across stdout chunk boundaries while the
+        // child is still writing. waitForJsonRpcResponses will re-poll.
+        return null;
+      }
+    })
+    .filter((msg): msg is any => msg !== null);
 }
 
 async function waitForJsonRpcResponses(stdout: () => string, ids: number[], timeoutMs = 5000): Promise<any[]> {

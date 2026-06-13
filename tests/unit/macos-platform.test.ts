@@ -523,6 +523,15 @@ describe("MacOSPlatform ocr", () => {
         _cb?.(null, Buffer.alloc(0));
         return undefined;
       }
+      if (cmd === "import" || cmd === "scrot") {
+        // Linux screenshot commands — same empty-file mock as screencapture
+        // so the OCR test can run on non-darwin CI runners.
+        const fs = require("node:fs") as typeof import("node:fs");
+        const outFile = _args[_args.length - 1] as string;
+        try { fs.writeFileSync(outFile, Buffer.alloc(0)); } catch { /* ignore */ }
+        _cb?.(null, Buffer.alloc(0));
+        return undefined;
+      }
       _cb?.(null, "");
       return undefined;
     });
