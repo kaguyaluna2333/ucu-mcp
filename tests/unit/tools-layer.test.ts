@@ -91,7 +91,8 @@ function defaults() {
 beforeAll(async () => {
   defaults();
   const { McpServer } = await import("@modelcontextprotocol/sdk/server/mcp.js");
-  const { registerTools, ToolRegistry } = await import("../../src/mcp/tools/index.js");
+  const toolsModule = await import("../../src/mcp/tools/index.js");
+  const { registerTools, ToolRegistry } = toolsModule;
   const server = new McpServer({ name: "ucu-mcp", version: "0.1.0" });
   const orig = server.tool.bind(server);
   (server as any).tool = function (name: string, desc: string, schema: unknown, handler: TH) {
@@ -100,6 +101,16 @@ beforeAll(async () => {
   };
   ToolRegistry["_instance"] = undefined;
   registerTools(server);
+
+  // On non-darwin platforms getPlatform() returns undefined. Inject the mock
+  // so tool handlers dispatch correctly regardless of host OS.
+  (toolsModule as any).__setPlatformForTesting(mockPlat);
+});
+
+afterAll(() => {
+  import("../../src/mcp/tools/index.js").then((m) => {
+    (m as any).__setPlatformForTesting(undefined);
+  });
 });
 
 beforeEach(() => {

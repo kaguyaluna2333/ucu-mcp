@@ -14,6 +14,11 @@ export function getPlatform(): Platform {
   }
   return _platform;
 }
+
+/** @internal Test-only injection point. */
+export function __setPlatformForTesting(platform: Platform | undefined): void {
+  _platform = platform;
+}
 export const safety = new SafetyGuard();
 
 let activeTargetContext: AppTarget | undefined;

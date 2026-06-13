@@ -14,7 +14,7 @@ import { registerKeyboardTools } from "./keyboard-tools.js";
 import { registerElementTools, findElementInputSchema } from "./element-tools.js";
 import { registerAppTools } from "./app-tools.js";
 
-export { getActiveTarget } from "./helpers.js";
+export { getActiveTarget, __setPlatformForTesting } from "./helpers.js";
 export { startUserActivityMonitor, stopUserActivityMonitor } from "./helpers.js";
 export { findElementInputSchema } from "./element-tools.js";
 
