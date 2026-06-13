@@ -46,7 +46,7 @@ export async function listApps(this: MacOSPlatform): Promise<AppInfo[]> {
 
 export async function focusApp(this: MacOSPlatform, app: string): Promise<AppTarget> {
   const appLiteral = JSON.stringify(app);
-  (this as any).windowCache = undefined;
+  this.windowCache = undefined;
 
   let target: import("../base.js").WindowInfo | undefined;
   const deadline = Date.now() + 3000;
@@ -58,7 +58,7 @@ export async function focusApp(this: MacOSPlatform, app: string): Promise<AppTar
   } while (Date.now() < deadline);
 
   if (!target) {
-    (this as any).activeTarget = undefined;
+    this.activeTarget = undefined;
     const err = new WindowNotFoundError(app, { hint:
       "list_windows returned no match for this app. If the app is running, " +
       "the most likely cause is that it is an Electron app whose AX tree is " +
@@ -70,7 +70,7 @@ export async function focusApp(this: MacOSPlatform, app: string): Promise<AppTar
       "Alternatively, modify the app's config file or database directly." });
     throw err;
   }
-  (this as any).activeTarget = {
+  this.activeTarget = {
     targetId: randomUUID(),
     appName: target.processName,
     pid: target.pid,
@@ -78,11 +78,11 @@ export async function focusApp(this: MacOSPlatform, app: string): Promise<AppTar
     title: target.title,
     capturedAt: new Date().toISOString(),
   };
-  return (this as any).activeTarget;
+  return this.activeTarget;
 }
 
 export async function getActiveBrowserContext(this: MacOSPlatform, app?: string): Promise<BrowserContext | undefined> {
-  const appName = app || (this as any).activeTarget?.appName;
+  const appName = app || this.activeTarget?.appName;
   if (!appName) return undefined;
 
   const normalized = appName.toLowerCase();
@@ -135,18 +135,17 @@ export async function getActiveBrowserContext(this: MacOSPlatform, app?: string)
 
 export async function listWindows(this: MacOSPlatform, _includeMinimized?: boolean): Promise<WindowInfo[]> {
   const now = Date.now();
-  const self = this as any;
-  if (self.windowCache && now - self.windowCache.cachedAt <= self.windowCacheTtlMs) {
-    return self.windowCache.windows.map((window: WindowInfo) => ({
+  if (this.windowCache && now - this.windowCache.cachedAt <= this.windowCacheTtlMs) {
+    return this.windowCache.windows.map((window: WindowInfo) => ({
       ...window,
       bounds: { ...window.bounds },
     }));
   }
 
-  if (self.windowCacheInFlight) {
-    return self.windowCache?.windows.map((w: WindowInfo) => ({ ...w, bounds: { ...w.bounds } })) ?? [];
+  if (this.windowCacheInFlight) {
+    return this.windowCache?.windows.map((w: WindowInfo) => ({ ...w, bounds: { ...w.bounds } })) ?? [];
   }
-  self.windowCacheInFlight = true;
+  this.windowCacheInFlight = true;
 
   try {
     let windows: WindowInfo[];
@@ -157,7 +156,7 @@ export async function listWindows(this: MacOSPlatform, _includeMinimized?: boole
       windows = await listWindowsJxa.call(this);
     }
 
-    self.windowCache = {
+    this.windowCache = {
       cachedAt: Date.now(),
       windows: windows.map((window) => ({
         ...window,
@@ -168,7 +167,7 @@ export async function listWindows(this: MacOSPlatform, _includeMinimized?: boole
   } catch {
     return [];
   } finally {
-    self.windowCacheInFlight = false;
+    this.windowCacheInFlight = false;
   }
 }
 
@@ -204,9 +203,8 @@ function listWindowsNative(this: MacOSPlatform): WindowInfo[] | null {
 }
 
 function resolveNativeHelper(this: MacOSPlatform, folder: string, binary: string): string | null {
-  const self = this as any;
-  if (self._nativeHelperPaths && folder in self._nativeHelperPaths) {
-    const override = self._nativeHelperPaths[folder];
+  if (this._nativeHelperPaths && folder in this._nativeHelperPaths) {
+    const override = this._nativeHelperPaths[folder];
     return override === null ? null : override;
   }
   const candidates = [

@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-06-13
+
+### Security
+
+- **JXA escaping unified (P0/P1)**: All 8 JXA code-injection sites that built strings via manual `.replace()` escaping now use `JSON.stringify()` for every interpolated value. Eliminates shell-substitution, backtick, newline, and AppleScript injection vectors across `restoreFocus`, `focusApp`, `getActiveBrowserContext`, `getWindowState`, `ocrJxa`, `findElement`, `clickElement`, `typeInElement`, `setElementValue`. (SEC-P0-1, SEC-P0-2, SEC-P1-2, SEC-P1-3, ERR-P1-6)
+- **`isScreenLocked` fail-closed (P1)**: Previously returned `false` when the `ioreg` check threw, letting actions proceed on a potentially locked screen. Now returns `true` on error so actions are blocked until lock state can be confirmed. (ERR-P1-4)
+- **Window-skip / URL blocklist guards activated (P1)**: `SafetyGuard`'s `windowTitle` and `url` checks were dead code because no tool handler passed those fields. New `getSafetyContext()` helper resolves both from the active target and is spread into all 11 action tools' `withSafety` params. (SEC-P1-1)
+
+### Fixed
+
+- `listApps` and `listWindowsJxa` now wrap their `osascript` calls in `try/catch` and rethrow via `rethrowAccessibilityError`, so a permission failure surfaces as `PermissionError("accessibility")` with a recovery hint instead of a generic `PlatformError`. (ERR-P1-3)
+- `getScreenSize` logs the failure and returns an `{ estimated: true }` flag on the fallback `1920x1080` value, instead of silently returning a default that callers cannot distinguish from a real measurement. (ERR-P1-5)
+
+### Changed
+
+- **`macos.ts` split into 10 domain modules**: The 1995-line monolith is now `base.ts`, `helpers.ts`, `focus.ts`, `screen.ts`, `window.ts`, `ax-tree.ts`, `input.ts`, `element.ts`, `clipboard.ts`, `index.ts` under `src/platform/macos/`. `base.ts` defines the class and re-binds methods; all `(this as any)` casts removed.
+- **`tools.ts` split into 7 domain modules**: The 908-line tool registry is now `helpers.ts`, `screen-tools.ts`, `input-tools.ts`, `keyboard-tools.ts`, `element-tools.ts`, `app-tools.ts`, `index.ts` under `src/mcp/tools/`. A `ToolRegistry` class + `registerTool` callback pattern replaces the flat registration.
+- **JXA helper templates extracted**: New `src/platform/jxa-helpers.ts` (216 lines) centralizes the `childElements`, `resolveElementByFullPath`, `resolveElementInApp`, `elemString`, `getBounds`, `isVisible`, `descriptorMatches`, `scoreEquivalent`, `refetchEquivalent` JXA functions. `element.ts` and `ax-tree.ts` now import and interpolate these instead of inlining 3× duplicated copies.
+- `FindElementResult` type now has formal `subrole?: string` and `identifier?: string` fields; the `as any` casts that read them are gone.
+
+### Tests
+
+- 279 tests pass (13 unit + 2 integration), 12 skipped (2 GUI smoke suites gated by env vars). +34 new security tests: clipboard injection patterns (shell substitution, backtick, chaining, piping, JXA/AppleScript injection), permission-denied paths for all AX element tools, and platform-method integration coverage.
+- Verified on Node v22.22.3 / macOS 26.6 (arm64). `npm run build` compiles 3 native Swift helpers.
+
 ## [0.4.1] - 2026-06-11
 
 ### Changed

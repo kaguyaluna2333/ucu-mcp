@@ -60,6 +60,7 @@ export function isScreenLocked(this: MacOSPlatform): boolean {
     return /"IOConsoleLocked"\s*=\s*Yes/.test(out);
   } catch {
     // Fail-closed: if we can't determine lock state, assume locked
+    logger.warn("isScreenLocked check failed, assuming locked");
     return true;
   }
 }

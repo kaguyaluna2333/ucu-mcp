@@ -8,20 +8,20 @@ export async function saveFocus(this: MacOSPlatform): Promise<void> {
     if (front) {
       const windows = await this.listWindows();
       const win = windows.find((w) => w.processName === front.name && w.isOnScreen);
-      (this as any).savedFocus = {
+      this.savedFocus = {
         appName: front.name,
         windowTitle: win?.title ?? "",
       };
     }
   } catch {
-    (this as any).savedFocus = undefined;
+    this.savedFocus = undefined;
   }
 }
 
 export async function restoreFocus(this: MacOSPlatform): Promise<void> {
-  if (!(this as any).savedFocus) return;
+  if (!this.savedFocus) return;
   try {
-    const { appName } = (this as any).savedFocus;
+    const { appName } = this.savedFocus;
     const appNameLiteral = JSON.stringify(appName);
     execFileSync("osascript", [
       "-e", `tell application ${appNameLiteral} to activate`,
@@ -29,5 +29,5 @@ export async function restoreFocus(this: MacOSPlatform): Promise<void> {
   } catch {
     // Best effort — don't fail the action if restore fails
   }
-  (this as any).savedFocus = undefined;
+  this.savedFocus = undefined;
 }

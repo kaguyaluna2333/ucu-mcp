@@ -3,12 +3,13 @@ import type { MacOSPlatform } from "./base.js";
 import type { WindowInfo, WindowState, FindElementOptions, FindElementResult, FindElementResponse } from "../base.js";
 import { WindowNotFoundError, PlatformError } from "../../util/errors.js";
 import { rethrowAccessibilityError } from "./helpers.js";
+import { jxaChildElements, jxaGetBounds, jxaIsVisible } from "../jxa-helpers.js";
 
 export async function getWindowState(this: MacOSPlatform, windowId?: string, depth?: number, includeBounds: boolean = true): Promise<WindowState> {
-  if (!windowId || windowId === (this as any).activeTarget?.windowId) {
+  if (!windowId || windowId === this.activeTarget?.windowId) {
     await this.validateActiveTarget();
   }
-  const resolvedWindowId = windowId || (this as any).activeTarget?.windowId;
+  const resolvedWindowId = windowId || this.activeTarget?.windowId;
   if (!resolvedWindowId) {
     throw new WindowNotFoundError("active target");
   }
@@ -22,11 +23,7 @@ export async function getWindowState(this: MacOSPlatform, windowId?: string, dep
     const jxaScript = `
       ObjC.import('AppKit');
       var se = Application('System Events');
-    function childElements(elem) {
-      try { return elem.uiElements(); } catch(e1) {
-        try { return elem.elements(); } catch(e2) { return []; }
-      }
-    }
+      ${jxaChildElements()}
       var result = {window: null, focusedElement: null, tree: null, error: null};
       var target = ${targetJson};
       var includeBounds = ${includeBounds ? "true" : "false"};
@@ -239,7 +236,7 @@ export async function getWindowState(this: MacOSPlatform, windowId?: string, dep
 export async function findElement(this: MacOSPlatform, options: FindElementOptions): Promise<FindElementResponse> {
   this.evictExpiredCacheEntries();
   const { text, role, app, depth, includeBounds = true, textMode = "contains", visibleOnly = false, value } = options;
-  const effectiveApp = app || (this as any).activeTarget?.appName;
+  const effectiveApp = app || this.activeTarget?.appName;
   const maxDepth = Math.min(depth || 5, 10);
   const maxResults = Math.min(Math.max(options.maxResults ?? 50, 1), 200);
   const appLiteral = JSON.stringify(effectiveApp || "");
@@ -266,11 +263,7 @@ export async function findElement(this: MacOSPlatform, options: FindElementOptio
 
     const jxaScript = `
       var se = Application('System Events');
-    function childElements(elem) {
-      try { return elem.uiElements(); } catch(e1) {
-        try { return elem.elements(); } catch(e2) { return []; }
-      }
-    }
+      ${jxaChildElements()}
       var results = [];
     var scannedCount = 0;
     var matchedCount = 0;
@@ -284,16 +277,7 @@ export async function findElement(this: MacOSPlatform, options: FindElementOptio
     var roleFilter = ${roleLiteral};
     var valueFilter = ${valueLiteral};
 
-    function isVisible(elem) {
-      try {
-        var pos = elem.position();
-        var sz = elem.size();
-        if (!pos || !sz) return false;
-        return sz[0] > 0 && sz[1] > 0 && pos[0] > -10000 && pos[1] > -10000;
-      } catch(e) {
-        return false;
-      }
-    }
+    ${jxaIsVisible()}
 
     function matchesValue(filter, value, mode) {
       if (filter === null) return true;
@@ -350,15 +334,7 @@ export async function findElement(this: MacOSPlatform, options: FindElementOptio
       return true;
     }
 
-    function getBounds(elem) {
-      try {
-        var pos = elem.position();
-        var sz = elem.size();
-        return {x: pos[0] || 0, y: pos[1] || 0, width: sz[0] || 0, height: sz[1] || 0};
-      } catch(e) {
-        return {x: 0, y: 0, width: 0, height: 0};
-      }
-    }
+    ${jxaGetBounds()}
 
     function traverse(elem, path, currentDepth) {
       if (resultCount[0] >= maxResults) return;
@@ -442,15 +418,15 @@ export async function findElement(this: MacOSPlatform, options: FindElementOptio
     const durationMs = Date.now() - startTime;
     for (const result of parsed.results) {
       const appName = effectiveApp || result.id.split("/")[0] || "";
-      (this as any).elementCache.set(result.id, {
+      this.elementCache.set(result.id, {
         elementId: result.id,
         appName,
         role: result.role,
         name: result.name,
         value: result.value,
         description: result.description,
-        subrole: (result as any).subrole,
-        identifier: (result as any).identifier,
+        subrole: result.subrole,
+        identifier: result.identifier,
         bounds: result.bounds,
         cachedAt: Date.now(),
       });

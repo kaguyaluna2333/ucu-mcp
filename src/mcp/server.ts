@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createStdioTransport } from "./transport.js";
-import { registerTools, startUserActivityMonitor } from "./tools.js";
+import { registerTools, startUserActivityMonitor } from "./tools/index.js";
 
 const UCU_MCP_INSTRUCTIONS = `
 UCU-MCP is a cross-client computer-use server for Claude Code CLI/Desktop, OpenCode, and other MCP clients.

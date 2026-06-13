@@ -9,7 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ToolRegistry } from "../../src/mcp/tools.js";
+import { ToolRegistry } from "../../src/mcp/tools/index.js";
 import type { Platform } from "../../src/platform/base.js";
 
 // ---------------------------------------------------------------------------

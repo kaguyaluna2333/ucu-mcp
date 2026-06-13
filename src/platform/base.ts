@@ -110,6 +110,8 @@ export interface FindElementResult {
   role: string;
   name: string;
   value?: string;
+  subrole?: string;
+  identifier?: string;
   bounds?: {
     x: number;
     y: number;
