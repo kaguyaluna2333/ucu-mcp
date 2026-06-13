@@ -44,6 +44,7 @@ export function registerTools(server: McpServer): void {
     schema: Record<string, any>,
     handler: (params: any) => Promise<any>,
   ) => {
+    registry.register(name);
     server.tool(name, description, schema, async (params: any) => {
       try {
         return await handler(params);
