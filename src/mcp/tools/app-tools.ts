@@ -83,7 +83,12 @@ export function registerAppTools(registerTool: RegisterToolFn): void {
     const { fileURLToPath } = await import("node:url");
     const { execFileSync } = await import("node:child_process");
     const permissions = await checkPermissions();
-    const screenLocked = getPlatform().isScreenLocked?.() ?? false;
+    let screenLocked = false;
+    try {
+      screenLocked = getPlatform().isScreenLocked?.() ?? false;
+    } catch {
+      // Non-darwin platform or uninitialized — screen lock not applicable.
+    }
     const termApp = process.platform === "darwin" ? getTerminalAppName() : undefined;
 
     function resolveHelperPath(relParts: string[]): { path: string | null; tried: readonly string[] } {
