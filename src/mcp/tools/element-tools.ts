@@ -70,4 +70,16 @@ export function registerElementTools(registerTool: RegisterToolFn): void {
     await withSafety<void>({ action: "type_in_element", params: { text: params.text, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().typeInElement(params.elementId, params.text, effectiveApp, params.clearFirst) });
     return actionResponse("type_in_element", { typed: true, elementId: params.elementId, charCount: params.text.length }, { elementId: params.elementId, app: effectiveApp }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
   });
+
+  registerTool("click_menu_bar_extra", "Click a menu bar status item (tray icon) — for menu-bar-only apps (e.g. cc-switch) that focus_app cannot target. After clicking, the menu opens; use find_element to locate menu items, or screenshot + ocr if the menu's AX tree is opaque.", {
+    app: z.string().describe("Target app name"),
+    description: z.string().optional().describe("Match menu bar item by description/name substring"),
+    name: z.string().optional().describe("Match menu bar item by name/description substring"),
+    index: z.number().int().nonnegative().optional().describe("0-based index among matched items (default 0)"),
+    ...captureAfterFields,
+  }, async (params) => {
+    const safetyCtx = await getSafetyContext();
+    await withSafety<void>({ action: "click_menu_bar_extra", params: { ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().clickMenuBarExtra!(params.app, { description: params.description, name: params.name, index: params.index }) });
+    return actionResponse("click_menu_bar_extra", { clicked: true, app: params.app }, { app: params.app }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+  });
 }

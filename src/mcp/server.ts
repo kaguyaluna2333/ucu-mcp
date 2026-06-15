@@ -13,6 +13,7 @@ Pick the right tool sequence for the task:
 • Fill a form field → find_element (text/role) + type_in_element or set_value. Prefer AX over coordinates.
 • Click a menu bar item → get_screen_size + click with coordinates (menu bar is not in the AX tree).
 • Read what's on screen → screenshot; for text not in AX use ocr; for a structured tree use get_window_state.
+• When image content is not visible (relayed/downgraded to URL) → screenshot with describe=true, or describe_screen for a text-only structured view (OCR + AX tree + foreground window).
 • Switch between apps → list_apps, then focus_app; subsequent tools use the active target context.
 • Verify an action succeeded → captureAfter=true on action tools, or call screenshot afterwards.
 • Wait for UI to change → wait_for_element (until: "appear" default; also "disappear" or "value_change").

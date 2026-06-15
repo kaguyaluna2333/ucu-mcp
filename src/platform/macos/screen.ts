@@ -81,7 +81,7 @@ export async function ocr(this: MacOSPlatform, display?: number, region?: Screen
     const nativeResult = await ocrNative(tmpPath, scaleFactor, region);
     if (nativeResult) return nativeResult;
 
-    return await ocrJxa(tmpPath, screenSize, scaleFactor, region, buf);
+    return await ocrJxa(tmpPath, screenSize, scaleFactor, region);
   } finally {
     await unlink(tmpPath).catch(() => {});
   }
@@ -90,6 +90,9 @@ export async function ocr(this: MacOSPlatform, display?: number, region?: Screen
 async function ocrNative(tmpPath: string, scaleFactor: number, region?: ScreenRegion): Promise<OcrResult | null> {
   const screenDirname = dirname(fileURLToPath(import.meta.url));
   const candidates = [
+    // npm prod: screen.js 编译落在 dist/src/platform/macos/（4 级深），到包根需 4 级 ../
+    join(screenDirname, "..", "..", "..", "..", "native", "ocr", "ocr-helper"),
+    // dev: screen.ts 在 src/platform/macos/（3 级深），3 级到包根
     join(screenDirname, "..", "..", "..", "native", "ocr", "ocr-helper"),
     join(screenDirname, "..", "..", "native", "ocr", "ocr-helper"),
     join(process.cwd(), "native", "ocr", "ocr-helper"),
@@ -126,45 +129,47 @@ async function ocrNative(tmpPath: string, scaleFactor: number, region?: ScreenRe
   }
 }
 
-async function ocrJxa(tmpPath: string, screenSize: ScreenSize, scaleFactor: number, region: ScreenRegion | undefined, buf: Buffer): Promise<OcrResult> {
+async function ocrJxa(tmpPath: string, screenSize: ScreenSize, scaleFactor: number, region: ScreenRegion | undefined): Promise<OcrResult> {
   const pathLiteral = JSON.stringify(tmpPath);
   const jxaScript = `
     function run() {
       ObjC.import('Vision');
       ObjC.import('AppKit');
       ObjC.import('Foundation');
-      var app = Application.currentApplication();
-      app.includeStandardAdditions = true;
       var path = ${pathLiteral};
-      var url = $.NSURL.fileURLWithPath(path);
-      var image = $.NSImage.alloc.initWithContentsOfURL(url);
-      if (!image || !image.isValid) {
+      var fm = $.NSFileManager.defaultManager;
+      if (!fm.fileExistsAtPath(path)) {
         return JSON.stringify({error: "Failed to load screenshot image", elements: [], fullText: ""});
       }
-      var cgImage = image.CGImageForProposedRectContextHints(null, null, null);
-      if (!cgImage) {
+      var url = $.NSURL.fileURLWithPath(path);
+      var handler = $.VNImageRequestHandler.alloc.initWithURLOptions(url, $());
+      if (!handler) {
         return JSON.stringify({error: "Failed to get CGImage from screenshot", elements: [], fullText: ""});
       }
       var request = $.VNRecognizeTextRequest.alloc.init;
       request.recognitionLevel = $.VNRequestTextRecognitionLevelAccurate;
       request.usesLanguageCorrection = true;
-      var handler = $.VNImageRequestHandler.alloc.initWithCGImageOptions(cgImage, null);
-      var performError = $();
-      var success = handler.performRequestsError([request], performError);
+      var performError = Ref();
+      var success = handler.performRequestsError($([request]), performError);
       if (!success) {
         return JSON.stringify({error: "OCR request failed", elements: [], fullText: ""});
       }
       var results = request.results;
+      var image = $.NSImage.alloc.initWithContentsOfURL(url);
+      if (!image || $(image.representations()).count === 0) {
+        return JSON.stringify({error: "Failed to load screenshot image", elements: [], fullText: ""});
+      }
+      var rep = image.representations().objectAtIndex(0);
+      var imgWidth = rep.pixelsWide;
+      var imgHeight = rep.pixelsHigh;
       var elements = [];
       var fullTextParts = [];
-      var imgWidth = cgImage.width;
-      var imgHeight = cgImage.height;
       for (var i = 0; i < results.count; i++) {
         var obs = $(results).objectAtIndex(i);
         var candidates = obs.topCandidates(1);
-        if (candidates && candidates.count > 0) {
+        if (candidates && $(candidates).count > 0) {
           var candidate = $(candidates).objectAtIndex(0);
-          var text = candidate.string.toString();
+          var text = ObjC.unwrap(candidate.string);
           var confidence = candidate.confidence;
           var bbox = obs.boundingBox;
           var bx = bbox.origin.x * imgWidth;
@@ -190,8 +195,6 @@ async function ocrJxa(tmpPath: string, screenSize: ScreenSize, scaleFactor: numb
     throw new CaptureError(`ocr failed: ${parsed.error}${hint}`);
   }
 
-  const imgWidth = buf.readUInt32BE(16);
-  const scaleFactorX = screenSize.width / (region ? region.width : (imgWidth / scaleFactor));
   const elements = parsed.elements.map((el: any) => ({
     text: el.text,
     x: Math.round(el.x / scaleFactor) + (region ? region.x : 0),

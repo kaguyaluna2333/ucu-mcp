@@ -22,8 +22,8 @@ export function registerKeyboardTools(registerTool: RegisterToolFn): void {
   });
 
   registerTool("press_key", "Press a keyboard shortcut", {
-    keys: z.array(z.string()).optional().describe("Keys to press simultaneously"),
-    key: z.string().optional().describe("Single key to press (alias for keys)"),
+    keys: z.array(z.string()).optional().describe("Keys to press simultaneously — special keys (enter/escape/tab/f1-f12/arrows...), single letters a-z, or single digits 0-9"),
+    key: z.string().optional().describe("Single key (alias for keys) — special keys, single letter a-z, or single digit 0-9"),
     modifiers: z.array(z.string()).optional().describe("Modifier keys used with key, such as cmd, shift, alt, or ctrl"),
     windowId: z.string().optional().describe("UNSUPPORTED: windowId-targeted key events are not implemented"),
     ...captureAfterFields,

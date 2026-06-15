@@ -306,7 +306,7 @@ describeClientSmoke("installed ucu-mcp stdio server (v2 deep handshake)", () => 
         throw new Error(formatFailureReport("tools/list enumeration", report));
       }
       const toolNames = (listMessage.result.tools as Array<{ name: string }>).map((t) => t.name);
-      expect(toolNames.length, `expected 22 tools, got ${toolNames.length}: ${toolNames.join(", ")}`).toBe(22);
+      expect(toolNames.length, `expected 26 tools, got ${toolNames.length}: ${toolNames.join(", ")}`).toBe(26);
       for (const required of ["doctor", "screenshot", "list_apps", "find_element", "click_element", "type_in_element"]) {
         expect(toolNames, `tools/list missing ${required}`).toContain(required);
       }

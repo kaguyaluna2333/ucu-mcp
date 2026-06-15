@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-15
+
+cc-switch 操控诊断与视觉通道修复：打通 OCR + 字母快捷键 + 托盘 + 视觉降级 fallback + 内置 agent skill。
+
+### Added
+
+- **方向3 `describe_screen` 工具 + screenshot `describe` 选项（25→26 工具）**：结构化文本屏幕描述（OCR blocks + AX tree + foreground window），是 image content 在中转环境被降级为 URL 时的视觉 fallback。OCR/AX 各自 try/catch，失败聚合到 `errors[]` 不抛出。密码字段（`AXSecureTextField` 或 name 匹配 `/password|secret|token/i`）自动脱敏为 `[REDACTED]`。`screenshot(describe:true)` 在 image block 后追加 text block；独立 `describe_screen` 工具纯文本无 image。新增 `ScreenDescription` 类型（`base.ts`）；`axDepth` 用 `Math.min(depth,10)` 与 ax-tree 一致；`ocrBlocks` 默认 50 cap。
+- **方向4a `click_menu_bar_extra` 托盘支持 + SystemUIServer 遍历**：`findMenuBarExtra` JXA 两阶段——先查 app 自身 menuBarItems（`host:"self"`），为空或仅 Apple 菜单时追加遍历 `SystemUIServer` 进程托管的状态项（`host:"systemuiserver"`），按 description/name 双向 includes 匹配。`clickMenuBarExtra` 按 `host` 在正确进程重定位（SystemUIServer 顺序不稳定，按 name/description 二次匹配）。`MenuBarExtraItem` 加 `host` 字段。纯 LSUIElement 托盘应用现在可达。
+- **Agent Skill 三层**：`skills/ucu-mcp/SKILL.md`（精简入口 + YAML frontmatter）+ `references/{tool-reference,workflows,troubleshooting}.md`（深度文档，按需读取）+ `agents/openai.yaml`（Codex 接口元数据）。随 npm 包发布（`files` 字段加 `skills/`）。可通过 `npx skills add ucu-mcp -g -a codex/claude-code` 安装。README 加 "Agent Skill" 节。
+- `UCU_MCP_INSTRUCTIONS` 加 describe_screen 指引（image 不可见时的 fallback）。
+- `OBSERVE_ACTIONS` 加 `describe_screen`（observe 类，不触发 user-activity pause）。
+- 工具数断言 25→26 同步更新（tools-layer / cli-mcp / client-cli-smoke）。
+- +19 测试：describe_screen（OCR/AX 失败聚合、ocrBlocks cap、密码脱敏 AXSecureTextField/token、ocr=false/includeAx=false）+ screenshot describe=true + SystemUIServer 遍历（source 断言 / host 字段 / click 重定位）。
+
+### Fixed
+
+- **方向1 OCR 路径修复（两 bug 叠加）**：`ocrNative` candidates 加 4 级 `../../../../native/ocr/ocr-helper`（npm prod 下 screen.js 在 4 级深，原 3 级候选全 MISSING）；`ocrJxa` 重写绕开 CGImage 脆弱路径（`VNImageRequestHandler.initWithURLOptions` + `Ref()` + `ObjC.unwrap` + 像素维度 `pixelsWide/pixelsHigh`），消除 `NSNull unrecognized selector` 崩溃。删 `ocrJxa` 死代码 `scaleFactorX`（`buf.readUInt32BE(16)` 在权限缺失时抛 RangeError 绕过 hint）。`window.ts` `resolveNativeHelper` 同源 4 级路径修复。
+- **方向2 press_key 字母/数字键**：`typeText` 的 letterMap/digitMap 提升为模块级 `MAC_LETTER_KEY_CODES`/`MAC_DIGIT_KEY_CODES`；`pressKey` falsy-safe 三元回退（先特殊键 → 字母 `in` 判定 → 数字；用 `in` 防 `'a'`=0 穿透）。`keyboard-tools.ts` zod describe 更新（支持 a-z / 0-9）。
+- **SafetyGuard blocklist 修正（方向2 引入的回归）**：字母 q 可解析后 `cmd+shift+q`（注销）绕过 blocklist（只有 cmd+q）。blocklist 加 `cmd+shift+q` + `cmd+option+q`；`normalizeShortcut` 加修饰键别名归一化（alt→option / ctrl→control / cmd→command）根治 `cmd+alt+esc` 绕过 `cmd+option+esc`。
+- `findMenuBarExtra` JXA 进程名大小写/空格/连字符/下划线容差（`_norm`）；`matchMenuBarExtra` 无 selector 时过滤 Apple 菜单；`clickMenuBarExtra` null deref 防护。
+
+### Changed
+
+- 工具数 24→26（+`describe_screen`、+`click_menu_bar_extra`）。README/index.ts 注释同步。
+- `focus_app` 托盘回退建立 `windowId:"tray"` 的 activeTarget（pid:0），`validateActiveTarget` 对 tray 直接 return（不查 listWindows）。
+
+## [0.4.3] - 2026-06-14
+
+### Fixed
+
+- `registerTool` 回调漏调 `registry.register(name)`，导致启动日志 `Registered tools count:0`。一行修复（行为无变化，24 工具始终正常注册到 MCP server）。
+
 ## [0.4.2] - 2026-06-13
 
 ### Security

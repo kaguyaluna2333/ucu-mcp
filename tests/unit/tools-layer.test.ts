@@ -125,12 +125,12 @@ beforeEach(() => {
 afterAll(() => { vi.useRealTimers(); });
 
 describe("Tools registration", () => {
-  it("registers all 24 MCP tools", () => {
-    expect(tools.size).toBe(24);
+  it("registers all 26 MCP tools", () => {
+    expect(tools.size).toBe(26);
     const names = [...tools.keys()].sort();
     expect(names).toEqual([
-      "click","click_element","clipboard_read","clipboard_write",
-      "doctor","double_click","drag",
+      "click","click_element","click_menu_bar_extra","clipboard_read","clipboard_write",
+      "describe_screen","doctor","double_click","drag",
       "find_element","focus_app","get_cursor_position","get_screen_size",
       "get_window_state","list_apps","list_windows","move","ocr",
       "press_key","screenshot","scroll","set_value","type_in_element",
@@ -633,6 +633,110 @@ describe("screenshot tool", () => {
       retryable: false,
       message: "screenshot windowId cannot be combined with region",
     });
+  });
+
+  it("appends a text description block when describe=true", async () => {
+    mockPlat.ocr.mockResolvedValue({ elements: [{ text: "Save", x: 1, y: 2, width: 3, height: 4, confidence: 0.9 }], fullText: "Save" });
+    mockPlat.getWindowState.mockResolvedValue({
+      window: { id: "w1", title: "Notes", processName: "Notes", pid: 1, bounds: { x: 0, y: 0, width: 800, height: 600 }, isMinimized: false, isOnScreen: true },
+      tree: { role: "AXWindow", name: "Notes", states: [], children: [] },
+    });
+    const r = await tools.get("screenshot")!.handler({ describe: true });
+    expect(r.content).toHaveLength(2);
+    expect(r.content[0]).toMatchObject({ type: "image" });
+    expect(r.content[1]).toMatchObject({ type: "text" });
+    const desc = JSON.parse(r.content[1].text!);
+    expect(desc.capturedAt).toBeTruthy();
+    expect(desc.ocr.status).toBe("ok");
+    expect(desc.ocr.blocks[0].text).toBe("Save");
+    expect(desc.ax.status).toBe("ok");
+  });
+});
+
+describe("describe_screen tool", () => {
+  // NOTE: tests call handlers directly with explicit defaults, because the
+  // test harness bypasses the SDK's zod schema parsing (which would otherwise
+  // apply the ocr:true / includeAx:true defaults). In live MCP use the SDK
+  // applies these defaults before the handler runs.
+  it("returns a structured ScreenDescription with OCR + AX + foreground", async () => {
+    mockPlat.ocr.mockResolvedValue({
+      elements: Array.from({ length: 60 }, (_, i) => ({ text: `t${i}`, x: i, y: 0, width: 1, height: 1, confidence: 0.5 })),
+      fullText: "x".repeat(60),
+    });
+    mockPlat.getWindowState.mockResolvedValue({
+      window: { id: "w1", title: "Notes", processName: "Notes", pid: 1, bounds: { x: 0, y: 0, width: 800, height: 600 }, isMinimized: false, isOnScreen: true },
+      tree: { role: "AXWindow", name: "Notes", states: [], children: [] },
+    });
+    const r = await tools.get("describe_screen")!.handler({ ocr: true, includeAx: true, axDepth: 3, ocrBlocks: 50 });
+    const desc = JSON.parse(r.content[0].text!);
+    expect(desc.capturedAt).toBeTruthy();
+    expect(desc.screen).toMatchObject({ width: 1920, height: 1080, scaleFactor: 2 });
+    expect(desc.foregroundWindow.processName).toBe("Notes");
+    expect(desc.ocr.status).toBe("ok");
+    // ocrBlocks default = 50, so 60 elements should be capped
+    expect(desc.ocr.blocks).toHaveLength(50);
+    expect(desc.ax.status).toBe("ok");
+    expect(desc.errors).toEqual([]);
+  });
+
+  it("aggregates OCR failures into errors[] instead of throwing", async () => {
+    mockPlat.ocr.mockRejectedValueOnce(new Error("ocr engine crashed"));
+    const r = await tools.get("describe_screen")!.handler({ ocr: true, includeAx: true });
+    const desc = JSON.parse(r.content[0].text!);
+    expect(desc.ocr.status).toBe("failed");
+    expect(desc.ocr.blocks).toEqual([]);
+    expect(desc.errors).toEqual(
+      expect.arrayContaining([expect.objectContaining({ source: "ocr", message: expect.stringContaining("ocr engine crashed") })]),
+    );
+    // AX still collected
+    expect(desc.ax.status).toBe("ok");
+  });
+
+  it("aggregates AX failures into errors[] instead of throwing", async () => {
+    mockPlat.getWindowState.mockRejectedValueOnce(new Error("AX not authorized"));
+    const r = await tools.get("describe_screen")!.handler({ ocr: true, includeAx: true });
+    const desc = JSON.parse(r.content[0].text!);
+    expect(desc.ax.status).toBe("failed");
+    expect(desc.errors).toEqual(
+      expect.arrayContaining([expect.objectContaining({ source: "ax", message: expect.stringContaining("AX not authorized") })]),
+    );
+    // OCR still collected
+    expect(desc.ocr.status).toBe("ok");
+  });
+
+  it("masks AXSecureTextField values (password redaction)", async () => {
+    mockPlat.getWindowState.mockResolvedValueOnce({
+      window: { id: "w1", title: "Login", processName: "Notes", pid: 1, bounds: { x: 0, y: 0, width: 800, height: 600 }, isMinimized: false, isOnScreen: true },
+      tree: {
+        role: "AXWindow", name: "Login", states: [],
+        children: [
+          { role: "AXSecureTextField", name: "Password", value: "supersecret", states: [], children: [] },
+          { role: "AXTextField", name: "Username", value: "alice", states: [], children: [] },
+          { role: "AXTextField", name: "api token", value: "tok_123", states: [], children: [] },
+        ],
+      },
+    });
+    const r = await tools.get("describe_screen")!.handler({ ocr: true, includeAx: true });
+    const desc = JSON.parse(r.content[0].text!);
+    const children = desc.ax.elements.children;
+    expect(children[0].value).toBe("[REDACTED]"); // AXSecureTextField
+    expect(children[1].value).toBe("alice"); // normal field untouched
+    expect(children[2].value).toBe("[REDACTED]"); // name matches /token/
+  });
+
+  it("respects ocr=false (skip OCR, no Screen Recording requirement)", async () => {
+    const r = await tools.get("describe_screen")!.handler({ ocr: false, includeAx: true });
+    const desc = JSON.parse(r.content[0].text!);
+    expect(desc.ocr.status).toBe("skipped");
+    expect(desc.ocr.blocks).toEqual([]);
+    expect(mockPlat.ocr).not.toHaveBeenCalled();
+  });
+
+  it("respects includeAx=false (skip AX)", async () => {
+    const r = await tools.get("describe_screen")!.handler({ ocr: true, includeAx: false });
+    const desc = JSON.parse(r.content[0].text!);
+    expect(desc.ax.status).toBe("skipped");
+    expect(mockPlat.getWindowState).not.toHaveBeenCalled();
   });
 });
 

@@ -91,6 +91,21 @@ const MAC_MODIFIER_FLAGS: Record<string, number> = {
   control: 0x00040000, ctrl: 0x00040000,
 };
 
+// 字母/数字 keyCode —— typeText 与 pressKey 共享的唯一数据源。
+// pressKey 在 MAC_KEY_CODES（特殊键）未命中时回退查这两个 map，让 Cmd+M / Cmd+W 等
+// 含字母的快捷键可用。注意 'a' 的 keyCode 是 0，查找时必须用 `in` 判定存在性，
+// 不能用 truthy（否则 0 会被当成未命中而穿透到 digit map）。
+const MAC_LETTER_KEY_CODES: Record<string, number> = {
+  a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9,
+  b: 11, q: 12, w: 13, e: 14, r: 15, y: 16, t: 17,
+  o: 31, u: 32, i: 33, p: 34, l: 37, j: 38, k: 40,
+  n: 45, m: 46,
+};
+const MAC_DIGIT_KEY_CODES: Record<string, number> = {
+  "1": 18, "2": 19, "3": 20, "4": 21, "5": 23,
+  "6": 22, "7": 26, "8": 28, "9": 25, "0": 29,
+};
+
 // ── AppleScript string escaping ───────────────────────────────────────────
 
 function escapeAppleScriptString(str: string): string {
@@ -338,23 +353,11 @@ export async function typeText(
   if (_platform === "darwin") {
     // Character -> { keyCode, shift? } map for CGEvent injection
     const CHAR_TO_KEY: Record<string, { code: number; shift?: boolean }> = {};
-    // Lowercase letters
-    const letterMap: Record<string, number> = {
-      a: 0, s: 1, d: 2, f: 3, h: 4, g: 5, z: 6, x: 7, c: 8, v: 9,
-      b: 11, q: 12, w: 13, e: 14, r: 15, y: 16, t: 17,
-      o: 31, u: 32, i: 33, p: 34, l: 37, j: 38, k: 40,
-      n: 45, m: 46,
-    };
-    for (const [ch, code] of Object.entries(letterMap)) {
+    for (const [ch, code] of Object.entries(MAC_LETTER_KEY_CODES)) {
       CHAR_TO_KEY[ch] = { code };
       CHAR_TO_KEY[ch.toUpperCase()] = { code, shift: true };
     }
-    // Digits
-    const digitMap: Record<string, number> = {
-      "1": 18, "2": 19, "3": 20, "4": 21, "5": 23,
-      "6": 22, "7": 26, "8": 28, "9": 25, "0": 29,
-    };
-    for (const [ch, code] of Object.entries(digitMap)) {
+    for (const [ch, code] of Object.entries(MAC_DIGIT_KEY_CODES)) {
       CHAR_TO_KEY[ch] = { code };
     }
     // Unshifted symbols
@@ -481,9 +484,16 @@ export async function pressKey(
     return;
   }
   if (_platform === "darwin") {
-    const keyCode = MAC_KEY_CODES[key.toLowerCase()];
+    const lookup = key.toLowerCase();
+    // 先查特殊键，未命中再回退查字母/数字（让 Cmd+M / Cmd+W 等含字母的快捷键可用）。
+    // 用 `in` 判定存在性——'a' 的 keyCode 是 0，truthy 判断会误穿透到 digit map。
+    const keyCode =
+      lookup in MAC_KEY_CODES ? MAC_KEY_CODES[lookup] :
+      (key.length === 1 && lookup in MAC_LETTER_KEY_CODES) ? MAC_LETTER_KEY_CODES[lookup] :
+      (key.length === 1 && key in MAC_DIGIT_KEY_CODES) ? MAC_DIGIT_KEY_CODES[key] :
+      undefined;
     if (keyCode === undefined) {
-      throw new Error(`Unknown key: ${key}. Supported keys: ${Object.keys(MAC_KEY_CODES).join(", ")}`);
+      throw new Error(`Unknown key: ${key}. Supported keys: special keys (${Object.keys(MAC_KEY_CODES).join(", ")}), single letters a-z, single digits 0-9`);
     }
 
     // Build modifier flags

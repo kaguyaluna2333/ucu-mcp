@@ -6,7 +6,7 @@ import { screenshot, screenshotWindow, getScreenSize, isScreenLocked, ocr } from
 import { listApps, focusApp, getActiveBrowserContext, listWindows } from "./window.js";
 import { getWindowState, findElement } from "./ax-tree.js";
 import { click, move, drag, scroll, getCursorPosition, type as typeMethod, key } from "./input.js";
-import { clickElement, typeInElement, setElementValue } from "./element.js";
+import { clickElement, typeInElement, setElementValue, findMenuBarExtra, clickMenuBarExtra } from "./element.js";
 import { readClipboard, writeClipboard } from "./clipboard.js";
 
 export type { MacOSPlatformOptions } from "./helpers.js";
@@ -64,6 +64,9 @@ export class MacOSPlatform implements Platform {
 
   async validateActiveTarget(): Promise<void> {
     if (!this.activeTarget?.windowId) return;
+    // 托盘 target（focus_app 找不到窗口时回退到 status item）没有真实窗口，
+    // 恒有效直到模型显式 focus_app 其他应用——不查 listWindows（查了必然失配）。
+    if (this.activeTarget.windowId === "tray") return;
     this.windowCache = undefined;
     const windows = await this.listWindows(true);
     const match = windows.find(w => w.id === this.activeTarget!.windowId);
@@ -105,6 +108,8 @@ export class MacOSPlatform implements Platform {
   clickElement = clickElement;
   typeInElement = typeInElement;
   setElementValue = setElementValue;
+  findMenuBarExtra = findMenuBarExtra;
+  clickMenuBarExtra = clickMenuBarExtra;
 
   readClipboard = readClipboard;
   writeClipboard = writeClipboard;

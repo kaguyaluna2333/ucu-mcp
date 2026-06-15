@@ -26,6 +26,9 @@ export async function clickElement(this: MacOSPlatform, elementId: string, app?:
     ${jxaElementActionHelpers()}
     var elemPath = ${elementIdLiteral};
     var appName = ${appLiteral};
+    // 容忍大小写/空格/连字符/下划线变体（cc-switch vs CC Switch vs cc_switch）
+    var _norm = function(s) { return String(s||'').toLowerCase().split(' ').join('').split('-').join('').split('_').join(''); };
+    var appNorm = _norm(appName);
     var cached = ${cachedJson};
 
     var elem = resolveElementInApp(elemPath, appName) || resolveElementByFullPath(elemPath);
@@ -95,6 +98,9 @@ export async function typeInElement(this: MacOSPlatform, elementId: string, text
     ${jxaElementActionHelpers()}
     var elemPath = ${elementIdLiteral};
     var appName = ${appLiteral};
+    // 容忍大小写/空格/连字符/下划线变体（cc-switch vs CC Switch vs cc_switch）
+    var _norm = function(s) { return String(s||'').toLowerCase().split(' ').join('').split('-').join('').split('_').join(''); };
+    var appNorm = _norm(appName);
     var textToType = ${textLiteral};
     var shouldClear = ${clearFirst ? "true" : "false"};
     var cached = ${cachedJson};
@@ -177,6 +183,9 @@ export async function setElementValue(this: MacOSPlatform, elementId: string, va
     ${jxaElementActionHelpers()}
     var elemPath = ${elementIdLiteral};
     var appName = ${appLiteral};
+    // 容忍大小写/空格/连字符/下划线变体（cc-switch vs CC Switch vs cc_switch）
+    var _norm = function(s) { return String(s||'').toLowerCase().split(' ').join('').split('-').join('').split('_').join(''); };
+    var appNorm = _norm(appName);
     var valueToSet = ${valueLiteral};
     var cached = ${cachedJson};
 
@@ -219,5 +228,273 @@ export async function setElementValue(this: MacOSPlatform, elementId: string, va
     }
   } catch (error) {
     rethrowElementActionError(error, "set_value", elementId);
+  }
+}
+
+// ── Menu bar extras (status item / tray) — 方向4a ──────────────────────
+// 托盘应用（LSUIElement，如 cc-switch）的 status item 不在任何应用窗口 AX 树里，
+// focus_app 找不到窗口。这两个函数直接遍历 processes[app].menuBars() 的
+// menuBarItems，定位并点击托盘图标（AXPress，静默失败则坐标点击中心）。
+
+export interface MenuBarExtraItem {
+  menuBar: number;
+  index: number;
+  name: string;
+  description: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Which process hosts this status item. "self" = app's own menu bar; "systemuiserver" = third-party tray hosted by SystemUIServer. */
+  host: "self" | "systemuiserver";
+}
+
+export interface MenuBarExtraSelector {
+  description?: string;
+  name?: string;
+  index?: number;
+}
+
+export async function findMenuBarExtra(this: MacOSPlatform, app: string): Promise<MenuBarExtraItem[]> {
+  const appLiteral = JSON.stringify(app);
+  // 两阶段 JXA：先遍历 app 自身 menuBarItems（host:"self"），若为空或只有 Apple 菜单，
+  // 再遍历 SystemUIServer.menuBarItems 找第三方托盘 status item（host:"systemuiserver"）。
+  // 纯 LSUIElement 托盘应用的 status item 由 SystemUIServer 进程托管，不在 app 自身进程里。
+  const jxaScript = `
+    var se = Application('System Events');
+    var _result = null;
+    var appName = ${appLiteral};
+    // 容忍大小写/空格/连字符/下划线变体（cc-switch vs CC Switch vs cc_switch）
+    var _norm = function(s) { return String(s||'').toLowerCase().split(' ').join('').split('-').join('').split('_').join(''); };
+    var appNorm = _norm(appName);
+
+    // 双向 includes 容忍 "CC Switch" vs "cc-switch" 之类长度差异
+    var _matchApp = function(itemNorm) {
+      if (!itemNorm) return false;
+      return itemNorm === appNorm || itemNorm.indexOf(appNorm) !== -1 || appNorm.indexOf(itemNorm) !== -1;
+    };
+
+    var _readItem = function(item, mb, i, host) {
+      var desc = '', nm = '';
+      try { desc = item.description(); } catch(e) {}
+      try { nm = item.name(); } catch(e) {}
+      var pos = [0,0], sz = [0,0];
+      try { pos = item.position(); } catch(e) {}
+      try { sz = item.size(); } catch(e) {}
+      if (sz[0] === 0 && sz[1] === 0) return null;
+      return {menuBar: mb, index: i, name: nm, description: desc, x: pos[0], y: pos[1], width: sz[0], height: sz[1], host: host};
+    };
+
+    try {
+      var procs = se.processes;
+      var p = null;
+      for (var k = 0; k < procs.length; k++) {
+        var pn = '';
+        try { pn = procs[k].name(); } catch(e) {}
+        if (_norm(pn) === appNorm) { p = procs[k]; break; }
+      }
+
+      var items = [];
+
+      // 阶段 1：app 自身 menuBarItems（host:"self"）
+      if (p) {
+        try {
+          var menuBars = p.menuBars();
+          for (var mb = 0; mb < menuBars.length; mb++) {
+            var mbItems;
+            try { mbItems = menuBars[mb].menuBarItems(); } catch(e) { continue; }
+            for (var i = 0; i < mbItems.length; i++) {
+              var rec = _readItem(mbItems[i], mb, i, "self");
+              if (rec) items.push(rec);
+            }
+          }
+        } catch(e) {}
+      }
+
+      // 是否需要阶段 2：app 自身无 item，或仅含 Apple 菜单（index 0 的 app-name 项）
+      var hasNonApple = false;
+      for (var j = 0; j < items.length; j++) {
+        if (_norm(items[j].name) !== "apple") { hasNonApple = true; break; }
+      }
+
+      // 阶段 2：SystemUIServer 托管的第三方托盘 status item（host:"systemuiserver"）
+      // 仅当 app 自身没有可点击的非 Apple 项时才查 SystemUIServer，避免对有窗口的应用产生噪音。
+      if (!hasNonApple) {
+        try {
+          var suiProcs = se.processes.byName("SystemUIServer");
+          if (suiProcs) {
+            var suiBars = suiProcs.menuBars();
+            for (var smb = 0; smb < suiBars.length; smb++) {
+              var suiItems;
+              try { suiItems = suiBars[smb].menuBarItems(); } catch(e) { continue; }
+              for (var si = 0; si < suiItems.length; si++) {
+                var sItem = suiItems[si];
+                var sDesc = '', sNm = '';
+                try { sDesc = sItem.description(); } catch(e) {}
+                try { sNm = sItem.name(); } catch(e) {}
+                // 按 description/name 匹配目标 app（status item 的 description 通常是 app 名）
+                if (_matchApp(_norm(sDesc)) || _matchApp(_norm(sNm))) {
+                  var sRec = _readItem(sItem, smb, si, "systemuiserver");
+                  if (sRec) {
+                    // 保留匹配信号，供 click 二次定位
+                    sRec.name = sNm; sRec.description = sDesc;
+                    items.push(sRec);
+                  }
+                }
+              }
+            }
+          }
+        } catch(e) {
+          // SystemUIServer 不可达（罕见），忽略，继续返回阶段 1 结果
+        }
+      }
+
+      if (!p && items.length === 0) {
+        _result = {error: "process not found: " + appName, items: []};
+      } else {
+        _result = {items: items};
+      }
+    } catch(e) {
+      _result = {error: "menu bar AX read failed: " + String(e.message || e), items: []};
+    }
+    JSON.stringify(_result);
+  `;
+  let out: string;
+  try {
+    out = execFileSync("osascript", ["-l", "JavaScript", "-e", jxaScript], { encoding: "utf-8", timeout: 15000 }).trim();
+  } catch (error) {
+    rethrowElementActionError(error, "find_menu_bar_extra", app);
+    return []; // unreachable — rethrow throws
+  }
+  const parsed = JSON.parse(out);
+  if (parsed.error) {
+    throw new Error(parsed.error);
+  }
+  return parsed.items as MenuBarExtraItem[];
+}
+
+export function matchMenuBarExtra(items: MenuBarExtraItem[], selector: MenuBarExtraSelector): MenuBarExtraItem | undefined {
+  if (items.length === 0) return undefined;
+  let filtered = items;
+  if (selector.description) {
+    const d = selector.description.toLowerCase();
+    filtered = filtered.filter((it) => (it.description || "").toLowerCase().includes(d) || (it.name || "").toLowerCase().includes(d));
+  } else if (selector.name) {
+    const n = selector.name.toLowerCase();
+    filtered = filtered.filter((it) => (it.name || "").toLowerCase().includes(n) || (it.description || "").toLowerCase().includes(n));
+  } else if (selector.index === undefined) {
+    // 无 selector 时排除 Apple 菜单（macOS 每个 app 的 index 0 app-name 项），
+    // 否则 click_menu_bar_extra(app) 不带 selector 会误点 Apple 菜单。
+    // 注意：SystemUIServer 托管的第三方托盘 item 不应被此过滤误删——它们的 name 通常非 "apple"。
+    filtered = filtered.filter((it) => (it.name || "").toLowerCase() !== "apple");
+  }
+  if (selector.index !== undefined) {
+    return filtered[selector.index];
+  }
+  return filtered[0];
+}
+
+export async function clickMenuBarExtra(this: MacOSPlatform, app: string, selector: MenuBarExtraSelector = {}): Promise<void> {
+  const items = await this.findMenuBarExtra(app);
+  const target = matchMenuBarExtra(items, selector);
+  if (!target) {
+    throw new ElementNotFoundError(`menu bar extra not found in ${app} (selector: ${JSON.stringify(selector)}; ${items.length} items scanned)`);
+  }
+  const appLiteral = JSON.stringify(app);
+  const mb = target.menuBar;
+  const idx = target.index;
+  const host = target.host;
+  const tgtNameLiteral = JSON.stringify(target.name || "");
+  const tgtDescLiteral = JSON.stringify(target.description || "");
+  // AXPress，失败则坐标点击中心（与 clickElement 同模式，应对 Tauri 等静默吞）
+  // host==="systemuiserver" 时在 SystemUIServer 进程上重定位（托盘 status item 由它托管），
+  // SystemUIServer.menuBarItems 顺序不稳定，用保存的 name/description 二次匹配定位具体 item。
+  // host==="self" 时按 app 进程的 menuBars()[mb].menuBarItems()[idx] 重定位（稳定）。
+  const resolveItemBlock = host === "systemuiserver"
+    ? `// SystemUIServer 托管的第三方托盘：按 name/description 二次匹配（顺序不稳定）
+      var suiProc = null;
+      try { suiProc = se.processes.byName("SystemUIServer"); } catch(e) {}
+      var item = null;
+      if (suiProc) {
+        var suiBars = suiProc.menuBars();
+        outer: for (var b = 0; b < suiBars.length; b++) {
+          var suiItems;
+          try { suiItems = suiBars[b].menuBarItems(); } catch(e) { continue; }
+          for (var ii = 0; ii < suiItems.length; ii++) {
+            var it = suiItems[ii];
+            var iDesc = '', iNm = '';
+            try { iDesc = it.description(); } catch(e) {}
+            try { iNm = it.name(); } catch(e) {}
+            if (_matchApp(_norm(iDesc)) || _matchApp(_norm(iNm))
+                || _norm(iDesc) === tgtDescNorm || _norm(iNm) === tgtNameNorm) {
+              item = it; break outer;
+            }
+          }
+        }
+      }
+      if (!item) { _result = {success: false, error: "SystemUIServer status item not found for " + appName}; }`
+    : `// app 自身 menu bar：按 menuBar/index 重定位（稳定）
+      if (!p) {
+        _result = {success: false, error: "process not found: " + appName};
+      } else {
+        var item = p.menuBars()[${mb}].menuBarItems()[${idx}];
+      }`;
+  const jxaScript = `
+    var se = Application('System Events');
+    var _result = null;
+    var appName = ${appLiteral};
+    var tgtName = ${tgtNameLiteral};
+    var tgtDesc = ${tgtDescLiteral};
+    // 容忍大小写/空格/连字符/下划线变体（cc-switch vs CC Switch vs cc_switch）
+    var _norm = function(s) { return String(s||'').toLowerCase().split(' ').join('').split('-').join('').split('_').join(''); };
+    var appNorm = _norm(appName);
+    var tgtNameNorm = _norm(tgtName);
+    var tgtDescNorm = _norm(tgtDesc);
+    var _matchApp = function(itemNorm) {
+      if (!itemNorm) return false;
+      return itemNorm === appNorm || itemNorm.indexOf(appNorm) !== -1 || appNorm.indexOf(itemNorm) !== -1;
+    };
+    try {
+      var procs = se.processes;
+      var p = null;
+      for (var k = 0; k < procs.length; k++) {
+        var pn = '';
+        try { pn = procs[k].name(); } catch(e) {}
+        if (_norm(pn) === appNorm) { p = procs[k]; break; }
+      }
+      ${resolveItemBlock}
+      if (!_result && item) {
+        try {
+          item.actions.AXPress.perform();
+          _result = {success: true, method: "axpress"};
+        } catch(e) {
+          var pos = item.position();
+          var sz = item.size();
+          var cx = pos[0] + sz[0] / 2;
+          var cy = pos[1] + sz[1] / 2;
+          ObjC.import('CoreGraphics');
+          var pt = $.CGPointMake(cx, cy);
+          var down = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseDown, pt, $.kCGMouseButtonLeft);
+          $.CGEventPost($.kCGHIDEventTap, down);
+          var up = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseUp, pt, $.kCGMouseButtonLeft);
+          $.CGEventPost($.kCGHIDEventTap, up);
+          _result = {success: true, method: "coordinate", x: cx, y: cy};
+        }
+      }
+    } catch(e) {
+      _result = {success: false, error: String(e.message || e)};
+    }
+    JSON.stringify(_result);
+  `;
+  let out: string;
+  try {
+    out = execFileSync("osascript", ["-l", "JavaScript", "-e", jxaScript], { encoding: "utf-8", timeout: 15000 }).trim();
+  } catch (error) {
+    rethrowElementActionError(error, "click_menu_bar_extra", app);
+    return; // unreachable
+  }
+  const result = JSON.parse(out);
+  if (!result.success) {
+    throw new Error(`click_menu_bar_extra failed in ${app}: ${result.error}`);
   }
 }

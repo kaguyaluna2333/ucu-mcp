@@ -183,6 +183,55 @@ describe("input synthesis (extended coverage)", () => {
         { cmd: "xdotool", args: ["key", "Return"] },
       ]);
     });
+
+    // ── 方向2: 字母/数字键回退（复用 typeText 的 letterMap/digitMap）──
+    it("resolves single lowercase letter via letter-map fallback (m → keycode 46)", async () => {
+      const { pressKey } = await import("../../src/utils/input.js");
+      await pressKey("m", [], "darwin");
+      const script = lastJxaScript();
+      expect(script).toContain("$.CGEventCreateKeyboardEvent(null, 46, true)");
+      expect(script).toContain("$.CGEventCreateKeyboardEvent(null, 46, false)");
+    });
+
+    it("resolves 'a' to keycode 0 without falsy fall-through (regression guard)", async () => {
+      // 'a' 的 keyCode 是 0；若用 ?? 链 + truthy 判断会穿透到 digit map。
+      // 必须用 `in` 判定存在性，不能用 truthy。
+      const { pressKey } = await import("../../src/utils/input.js");
+      await pressKey("a", [], "darwin");
+      const script = lastJxaScript();
+      expect(script).toContain("$.CGEventCreateKeyboardEvent(null, 0, true)");
+      expect(script).toContain("$.CGEventCreateKeyboardEvent(null, 0, false)");
+    });
+
+    it("resolves single digit via digit-map fallback (5 → keycode 23)", async () => {
+      const { pressKey } = await import("../../src/utils/input.js");
+      await pressKey("5", [], "darwin");
+      const script = lastJxaScript();
+      expect(script).toContain("$.CGEventCreateKeyboardEvent(null, 23, true)");
+    });
+
+    it("combines letter keycode with cmd modifier (Cmd+M for cc-switch minimize)", async () => {
+      const { pressKey } = await import("../../src/utils/input.js");
+      await pressKey("m", ["cmd"], "darwin");
+      const script = lastJxaScript();
+      expect(script).toContain("$.CGEventCreateKeyboardEvent(null, 46, true)");
+      // cmd = 0x00100000 = 1048576
+      expect(script).toContain("1048576");
+    });
+
+    it("treats uppercase letter as same keycode as lowercase (shift controls case)", async () => {
+      const { pressKey } = await import("../../src/utils/input.js");
+      await pressKey("M", [], "darwin");
+      const script = lastJxaScript();
+      // 大写不改变 keycode（输出大写需调用方显式传 shift）
+      expect(script).toContain("$.CGEventCreateKeyboardEvent(null, 46, true)");
+    });
+
+    it("still rejects letter used as modifier (enter + [a] → Unknown modifier)", async () => {
+      // modifier 数组不接受字母键——契约保持
+      const { pressKey } = await import("../../src/utils/input.js");
+      await expect(pressKey("enter", ["a"], "darwin")).rejects.toThrow(/Unknown modifier/);
+    });
   });
 
   describe("pressShortcut", () => {

@@ -72,16 +72,17 @@ If you installed globally, you can use the shorter form:
 
 ## Tool List
 
-UCU-MCP provides 22 tools across five categories:
+UCU-MCP provides 26 tools across five categories:
 
 ### Screen & Window
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `screenshot` | Capture screen, window, or region as PNG/JPEG image content | `display?`, `windowId?`, `region?`, `maxWidth?`, `format?` |
+| `screenshot` | Capture screen, window, or region as PNG/JPEG image content; `describe=true` appends a structured text description (OCR + AX) for vision-degraded environments | `display?`, `windowId?`, `region?`, `maxWidth?`, `format?`, `describe?`, `describeOptions?` |
+| `describe_screen` | Structured text description of the screen (OCR blocks + AX tree + foreground window) — the vision-degraded fallback when image content is not visible to the model. Password fields are masked. | `display?`, `ocr?`, `includeAx?`, `axDepth?`, `ocrBlocks?`, `windowId?` |
 | `list_windows` | List all on-screen windows with IDs, titles, bounds | `includeMinimized?` |
 | `list_apps` | List visible macOS apps with pid, frontmost state, and window count | — |
-| `focus_app` | Select an app/window target context for later AX tools; returns `targetId`, `appName`, `pid`, `windowId`, `title`, and `capturedAt` | `app` |
+| `focus_app` | Select an app/window target context for later AX tools; returns `targetId`, `appName`, `pid`, `windowId`, `title`, and `capturedAt`. Falls back to a tray target for menu-bar-only apps. | `app` |
 | `get_window_state` | Get accessibility tree of a window, or the prior focus_app target when windowId is omitted | `windowId?`, `depth?`, `includeBounds?` |
 | `get_screen_size` | Get screen dimensions | `display?` |
 | `ocr` | Perform OCR on screen or region; returns text with bounding boxes and confidence | `display?`, `region?` |
@@ -112,6 +113,7 @@ UCU-MCP provides 22 tools across five categories:
 | `click_element` | Click an AX element by its id (from find_element), using the current focus_app target when app is omitted; refetches equivalent elements after UI updates | `elementId`, `app?`, `captureAfter?` |
 | `set_value` | Set an AX element's value directly without focusing it, using the current focus_app target when app is omitted | `elementId`, `value`, `app?`, `captureAfter?` |
 | `type_in_element` | Type text into a specific AX text field element; may focus the element and refetches equivalent elements after UI updates | `elementId`, `text`, `app?`, `clearFirst?`, `captureAfter?` |
+| `click_menu_bar_extra` | Click a menu-bar status item (tray icon) — for menu-bar-only apps (e.g. cc-switch) that focus_app cannot target. Finds items in the app's own menu bar or hosted by SystemUIServer. | `app`, `description?`, `name?`, `index?`, `captureAfter?` |
 
 ### Runtime & Synchronization
 
@@ -120,6 +122,8 @@ UCU-MCP provides 22 tools across five categories:
 | `doctor` | Check platform readiness, permissions, lock-screen state, and client integration hints | — |
 | `wait` | Wait for UI state to settle after launches, animations, or navigation | `ms` |
 | `wait_for_element` | Poll the AX tree until a matching element appears | `text?`, `role?`, `app?`, `timeout?`, `timeoutMs?`, `interval?`, `intervalMs?` |
+| `clipboard_read` | Read the current contents of the system clipboard | — |
+| `clipboard_write` | Write text to the system clipboard (text-injection patterns are blocked) | `text`, `captureAfter?` |
 
 Action tools accept `captureAfter`, `captureMaxWidth`, and `captureFormat` so an agent can receive a post-action screenshot as a second MCP image content item in the same response instead of spending another round trip on `screenshot`. When `captureAfter` is requested and the action succeeds, the tool returns an `ActionReceipt` (see the Action Receipt section below) with `capture.status: "ok"`. If post-action capture fails, the receipt has `status: "partial"` and `capture.status: "error"` with the error details. If `captureAfter` is omitted, `capture.status` is `"skipped"`.
 
@@ -414,6 +418,27 @@ ucu-mcp doctor
 ```
 
 The same readiness report is also available as the MCP `doctor` tool.
+
+## Agent Skill
+
+UCU-MCP ships an installable **agent skill** that gives Codex, Claude Code, and
+other agent runtimes richer guidance than the embedded MCP `instructions:` field
+alone — structured tool-selection rules, task playbooks, and an error-recovery
+reference. The skill lives at [`skills/ucu-mcp/`](skills/ucu-mcp/SKILL.md) and
+is included in the npm tarball.
+
+Install it for your agent runtime with the [`skills` CLI](https://www.npmjs.com/package/skills):
+
+```bash
+# Codex
+npx skills add ucu-mcp -g -a codex --skill ucu-mcp -y
+# Claude Code
+npx skills add ucu-mcp -g -a claude-code --skill ucu-mcp -y
+```
+
+Or reference it directly: the entry point is
+[`skills/ucu-mcp/SKILL.md`](skills/ucu-mcp/SKILL.md), with deeper content in
+`skills/ucu-mcp/references/` (tool reference, workflows, troubleshooting).
 
 ## Safety
 

@@ -36,6 +36,8 @@ export interface SafetyGuardConfig {
 const DEFAULT_BLOCKED_KEYS: string[] = [
   // macOS – app-level
   "cmd+q",
+  "cmd+shift+q",    // log out（方向2 后字母 q 可解析，须显式拦截）
+  "cmd+option+q",   // log out variant
   "cmd+w",
   "cmd+l",          // lock screen
   // macOS – system-level
@@ -104,12 +106,23 @@ const DEFAULT_TEXT_INJECTION_PATTERNS: Array<{ pattern: RegExp; reason: string }
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Normalize a shortcut string to lowercase, trimmed, sorted modifiers. */
+/** Modifier alias → canonical name. MAC_MODIFIER_FLAGS accepts both forms
+ *  (cmd/command, option/alt, control/ctrl); normalize them so a blocklist
+ *  entry like "cmd+option+esc" also catches "cmd+alt+esc". */
+const MODIFIER_CANONICAL: Record<string, string> = {
+  alt: "option", ctrl: "control", cmd: "command",
+};
+
+/** Normalize a shortcut string to lowercase, trimmed, sorted modifiers with
+ *  modifier aliases canonicalized (alt→option, ctrl→control, cmd→command). */
 function normalizeShortcut(raw: string): string {
   return raw
     .toLowerCase()
     .split("+")
-    .map((s) => s.trim())
+    .map((s) => {
+      const t = s.trim();
+      return MODIFIER_CANONICAL[t] ?? t;
+    })
     .sort()
     .join("+");
 }
@@ -136,6 +149,8 @@ export const OBSERVE_ACTIONS: ReadonlySet<string> = new Set([
   // and an AX window lookup — it does not synthesize mouse or keyboard input,
   // so the user-activity pause must not block it. (OpenCode 0.3.7 follow-up)
   "focus_app",
+  // describe_screen reads screen state (OCR + AX), no input synthesis.
+  "describe_screen",
 ]);
 
 /** Actions that synthesize user input — need full user-activity protection. */
@@ -150,6 +165,7 @@ export const INPUT_ACTIONS: ReadonlySet<string> = new Set([
   "click_element",
   "type_in_element",
   "set_value",
+  "click_menu_bar_extra",
   "clipboard_write",
 ]);
 

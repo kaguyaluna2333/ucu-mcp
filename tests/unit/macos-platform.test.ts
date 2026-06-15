@@ -547,6 +547,78 @@ describe("MacOSPlatform ocr", () => {
 
     await expect(platform.ocr(0, { x: 0, y: 0, width: 100, height: 100 })).rejects.toThrow(/Screen Recording permission is most likely missing/);
   });
+
+  // ── OCR native-path + JXA regression guards (方向1 修复) ──────────────
+  // screen.js 编译后落在 dist/src/platform/macos/（4 级深），到包根 native/ocr/
+  // 需要 4 级 ../。dev 下 screen.ts 在 src/platform/macos/（3 级）。两个 candidate
+  // 都要保留。这些源码断言防止有人未来误删 4 级条目（该 bug 只在 npm prod 暴露）。
+  it("ocrNative candidates include 4-level ../ path for npm prod layout", () => {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    const src = fs.readFileSync(path.join(process.cwd(), "src/platform/macos/screen.ts"), "utf-8");
+    expect(src).toMatch(/"\.\.",\s*"\.\.",\s*"\.\.",\s*"\.\.",\s*"native",\s*"ocr",\s*"ocr-helper"/);
+  });
+
+  it("window.ts resolveNativeHelper includes 4-level ../ path (same depth bug)", () => {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    const src = fs.readFileSync(path.join(process.cwd(), "src/platform/macos/window.ts"), "utf-8");
+    expect(src).toMatch(/__windowDirname[^)]*"\.\.",\s*"\.\.",\s*"\.\.",\s*"\.\.",\s*"native"/);
+  });
+
+  it("ocrJxa emits a JXA script free of NSNull-prone patterns", async () => {
+    // 旧 ocrJxa 有 4 个叠加 bug 导致必崩：
+    //   (1) CGImageForProposedRectContextHints(null,null,null) — null→NSNull
+    //   (2) var performError = $() — NSNull
+    //   (3) performRequestsError([request], ...) — 数组未 $() 包裹
+    //   (4) candidate.string.toString() — 返回类描述符而非文本
+    // 重写后应使用 initWithURLOptions + Ref() + $([request]) + ObjC.unwrap + 像素维度。
+    let osascriptCalls = 0;
+    execFileMock.mockImplementation((cmd: string, args: any[], cb: any) => {
+      if (cmd === "screencapture" || cmd === "import" || cmd === "scrot") {
+        const fs = require("node:fs") as typeof import("node:fs");
+        const outFile = args[args.length - 1] as string;
+        // 写一个最小 PNG 头（24 字节，offset 16-19 = width）让 ocrJxa 外层的
+        // buf.readUInt32BE(16) 不越界。本测试只验证生成的 JXA 脚本，不真跑 OCR。
+        const pngHead = Buffer.alloc(24);
+        pngHead.writeUInt32BE(100, 16);
+        pngHead.writeUInt32BE(100, 20);
+        try { fs.writeFileSync(outFile, pngHead); } catch { /* ignore */ }
+        cb?.(null, pngHead);
+        return undefined;
+      }
+      cb?.(null, "");
+      return undefined;
+    });
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === "osascript") {
+        osascriptCalls++;
+        // 第 1 次 osascript = getScreenSize；第 2 次 = ocrJxa
+        if (osascriptCalls === 1) {
+          return JSON.stringify({ width: 100, height: 100, scaleFactor: 2 });
+        }
+        // ocrJxa 路径：返回空结果让函数完成（脚本已通过 args 捕获）
+        return JSON.stringify({ elements: [], fullText: "", error: null });
+      }
+      // native binary 调用：返回空让 ocrNative 失败、落到 ocrJxa
+      return "";
+    });
+    const platform = new MacOSPlatform();
+    await platform.ocr(0, { x: 0, y: 0, width: 100, height: 100 });
+
+    const script = lastJxaScript();
+    // 已移除的 NSNull-prone 模式
+    expect(script).not.toContain("var performError = $()");
+    expect(script).not.toContain("CGImageForProposedRectContextHints");
+    expect(script).not.toMatch(/performRequestsError\(\[request\]/);
+    expect(script).not.toContain(".string.toString()");
+    // 新的正确模式
+    expect(script).toContain("initWithURLOptions");
+    expect(script).toContain("Ref()");
+    expect(script).toContain("$([request])");
+    expect(script).toContain("ObjC.unwrap");
+    expect(script).toContain("pixelsWide");
+  });
 });
 
 // ── AX Element Cache: Expiration, Size Limit, Signature Matching ────────
@@ -1262,5 +1334,133 @@ describe("MacOSPlatform method integration (TST-P1-3)", () => {
       throw new Error("CGEventSourceCreate failed");
     });
     expect(() => platform.getCursorPosition()).toThrow(PlatformError);
+  });
+});
+
+// ── Menu bar extras (tray) — 方向4a ─────────────────────────────────────
+describe("MacOSPlatform menu bar extras (tray)", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockReset();
+    execFileSyncMock.mockReturnValue(JSON.stringify({ success: true }));
+  });
+
+  it("findMenuBarExtra parses menu bar items returned by JXA", async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === "osascript") {
+        return JSON.stringify({ items: [
+          { menuBar: 0, index: 0, name: "Apple", description: null, x: 10, y: 0, width: 34, height: 33, host: "self" },
+          { menuBar: 0, index: 1, name: "CC Switch", description: null, x: 44, y: 0, width: 87, height: 33, host: "self" },
+        ] });
+      }
+      return "";
+    });
+    const platform = new MacOSPlatform();
+    const items = await platform.findMenuBarExtra("cc-switch");
+    expect(items).toHaveLength(2);
+    expect(items[1].name).toBe("CC Switch");
+    expect(items[1].index).toBe(1);
+    expect(items[1].host).toBe("self");
+  });
+
+  it("findMenuBarExtra surfaces AX read failure as error", async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === "osascript") {
+        return JSON.stringify({ error: "menu bar AX read failed: not authorized", items: [] });
+      }
+      return "";
+    });
+    const platform = new MacOSPlatform();
+    await expect(platform.findMenuBarExtra("cc-switch")).rejects.toThrow(/menu bar AX read failed/);
+  });
+
+  it("matchMenuBarExtra selects by name/description substring or index", async () => {
+    const { matchMenuBarExtra } = await import("../../src/platform/macos/element.js");
+    const items = [
+      { menuBar: 0, index: 0, name: "Apple", description: "", x: 10, y: 0, width: 34, height: 33, host: "self" as const },
+      { menuBar: 0, index: 1, name: "CC Switch", description: "status menu", x: 44, y: 0, width: 87, height: 33, host: "self" as const },
+    ];
+    expect(matchMenuBarExtra(items, { name: "switch" })?.index).toBe(1);
+    expect(matchMenuBarExtra(items, { description: "status" })?.index).toBe(1);
+    expect(matchMenuBarExtra(items, { index: 0 })?.name).toBe("Apple");
+    expect(matchMenuBarExtra(items, {})).toBe(items[1]); // 无 selector 时过滤 Apple，返回 CC Switch
+    expect(matchMenuBarExtra([], {})).toBeUndefined();
+  });
+
+  // ── SystemUIServer 第三方托盘遍历（方向4a 补全）─────────────────────────
+  it("findMenuBarExtra JXA includes SystemUIServer traversal", async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === "osascript") return JSON.stringify({ items: [] });
+      return "";
+    });
+    const platform = new MacOSPlatform();
+    await platform.findMenuBarExtra("some-tray-app").catch(() => {});
+    const script = lastJxaScript();
+    // JXA 必须含 SystemUIServer 进程查找 + 第三方托盘匹配逻辑
+    expect(script).toContain("SystemUIServer");
+    expect(script).toContain('"systemuiserver"');
+    expect(script).toContain("_matchApp");
+  });
+
+  it("findMenuBarExtra surfaces host field for SystemUIServer-hosted tray items", async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === "osascript") {
+        return JSON.stringify({ items: [
+          { menuBar: 0, index: 3, name: "", description: "SomeTrayApp", x: 1200, y: 0, width: 30, height: 25, host: "systemuiserver" },
+        ] });
+      }
+      return "";
+    });
+    const platform = new MacOSPlatform();
+    const items = await platform.findMenuBarExtra("SomeTrayApp");
+    expect(items).toHaveLength(1);
+    expect(items[0].host).toBe("systemuiserver");
+    expect(items[0].description).toBe("SomeTrayApp");
+  });
+
+  it("matchMenuBarExtra treats host as transparent (does not affect selection)", async () => {
+    const { matchMenuBarExtra } = await import("../../src/platform/macos/element.js");
+    const items = [
+      { menuBar: 0, index: 0, name: "Apple", description: "", x: 0, y: 0, width: 0, height: 0, host: "self" as const },
+      { menuBar: 0, index: 2, name: "", description: "CC Switch", x: 1100, y: 0, width: 30, height: 25, host: "systemuiserver" as const },
+    ];
+    // 无 selector：Apple 被过滤，剩下 systemuiserver 托管项
+    expect(matchMenuBarExtra(items, {})?.host).toBe("systemuiserver");
+    // 按 description 匹配也命中 systemuiserver 托管项
+    expect(matchMenuBarExtra(items, { description: "switch" })?.host).toBe("systemuiserver");
+  });
+
+  it("clickMenuBarExtra re-resolves on SystemUIServer process for host:systemuiserver", async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === "osascript") {
+        // 第一次调用 findMenuBarExtra 返回 systemuiserver 托管项
+        return JSON.stringify({ items: [
+          { menuBar: 0, index: 2, name: "", description: "TrayApp", x: 1100, y: 0, width: 30, height: 25, host: "systemuiserver" },
+        ] });
+      }
+      return "";
+    });
+    const platform = new MacOSPlatform();
+    await platform.clickMenuBarExtra("TrayApp", { description: "TrayApp" }).catch(() => {});
+    const script = lastJxaScript();
+    // click 脚本必须在 SystemUIServer 进程上二次匹配
+    expect(script).toContain("SystemUIServer");
+    expect(script).toContain("status item not found");
+  });
+
+  it("clickMenuBarExtra re-resolves on app process for host:self", async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === "osascript") {
+        return JSON.stringify({ items: [
+          { menuBar: 0, index: 1, name: "CC Switch", description: "", x: 44, y: 0, width: 87, height: 33, host: "self" },
+        ] });
+      }
+      return "";
+    });
+    const platform = new MacOSPlatform();
+    await platform.clickMenuBarExtra("cc-switch", { name: "switch" }).catch(() => {});
+    const script = lastJxaScript();
+    // host:self 走 app 进程 menuBars()[mb].menuBarItems()[idx]，不应含 SystemUIServer 遍历
+    expect(script).toContain("menuBars()[0]");
+    expect(script).not.toContain("byName(\"SystemUIServer\")");
   });
 });

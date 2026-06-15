@@ -1,0 +1,4 @@
+interface:
+  display_name: "UCU-MCP"
+  short_description: "Guide agents using UCU-MCP macOS computer-use"
+  default_prompt: "Use $ucu-mcp to automate macOS desktop apps through UCU-MCP."

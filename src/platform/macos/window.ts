@@ -58,6 +58,24 @@ export async function focusApp(this: MacOSPlatform, app: string): Promise<AppTar
   } while (Date.now() < deadline);
 
   if (!target) {
+    // 托盘应用（LSUIElement，如 cc-switch）没有常规窗口——回退找菜单栏 status item，
+    // 建立 tray activeTarget（windowId='tray'，validateActiveTarget 对它特判不查窗口）。
+    try {
+      const extras = await this.findMenuBarExtra(app);
+      if (extras.length > 0) {
+        this.activeTarget = {
+          targetId: randomUUID(),
+          appName: app,
+          pid: 0,
+          windowId: "tray",
+          title: "",
+          capturedAt: new Date().toISOString(),
+        };
+        return this.activeTarget;
+      }
+    } catch {
+      // findMenuBarExtra 失败（AX 权限/进程不可达等），落到下面的 WindowNotFoundError
+    }
     this.activeTarget = undefined;
     const err = new WindowNotFoundError(app, { hint:
       "list_windows returned no match for this app. If the app is running, " +
@@ -208,6 +226,9 @@ function resolveNativeHelper(this: MacOSPlatform, folder: string, binary: string
     return override === null ? null : override;
   }
   const candidates = [
+    // npm prod: window.js 在 dist/src/platform/macos/（4 级深），到包根需 4 级 ../
+    join(__windowDirname, "..", "..", "..", "..", "native", folder, binary),
+    // dev: window.ts 在 src/platform/macos/（3 级深），3 级到包根
     join(__windowDirname, "..", "..", "..", "native", folder, binary),
     join(__windowDirname, "..", "..", "native", folder, binary),
   ];

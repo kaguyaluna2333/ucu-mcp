@@ -139,6 +139,21 @@ export interface WindowState {
   tree?: ElementInfo;
 }
 
+/**
+ * Structured text description of the screen — a fallback for environments where
+ * image content blocks are downgraded to URLs (so the model cannot see screenshots).
+ * Each source (OCR / AX / foreground) is collected independently; failures are
+ * aggregated in `errors` rather than thrown.
+ */
+export interface ScreenDescription {
+  capturedAt: string;
+  screen: ScreenSize;
+  foregroundWindow?: WindowInfo;
+  ocr: { blocks: OcrElement[]; fullText: string; status: "ok" | "skipped" | "failed" };
+  ax: { elements?: ElementInfo; status: "ok" | "skipped" | "failed"; windowId?: string };
+  errors: Array<{ source: "ocr" | "ax" | "foreground" | "screen"; message: string }>;
+}
+
 export interface Platform {
   // Screenshot
   screenshot(display?: number, region?: ScreenRegion, options?: ScreenshotOptions): Promise<Buffer>;
@@ -175,6 +190,9 @@ export interface Platform {
   clickElement(elementId: string, app?: string): Promise<void>;
   typeInElement(elementId: string, text: string, app?: string, clearFirst?: boolean): Promise<void>;
   setElementValue?(elementId: string, value: string, app?: string): Promise<void>;
+  // 菜单栏 status item（托盘应用，LSUIElement）。macOS 专有，Windows/Linux 可不实现。
+  findMenuBarExtra?(app: string): Promise<unknown[]>;
+  clickMenuBarExtra?(app: string, selector?: { description?: string; name?: string; index?: number }): Promise<void>;
 
   // Safety State
   isScreenLocked?(): boolean;

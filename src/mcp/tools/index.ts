@@ -1,7 +1,7 @@
 /**
  * Tool registry for UCU-MCP.
  *
- * Registers 24 MCP tools on the server and dispatches each call through
+ * Registers 26 MCP tools on the server and dispatches each call through
  * a shared safety/permission/retry pipeline (`withSafety`).
  */
 
