@@ -50,23 +50,16 @@ const JXA_STATE_SIGNATURE = `
 `;
 
 /**
- * Shared JXA snippet: perform a coordinate click at the element's bounds center.
- * Returns the {x, y} used, or null if bounds could not be read.
+ * Shared JXA snippet: compute the element's bounds center (for coordinate fallback).
+ * Does NOT post any event — the actual click is performed by the TS input layer
+ * (this.click) so it routes through per-process posting (skylight-helper) when a
+ * pid is available, instead of the JXA HID-tap that would move the global cursor.
  */
-const JXA_COORDINATE_CLICK = `
-  function coordinateClick(elem) {
+const JXA_BOUNDS_CENTER = `
+  function boundsCenter(elem) {
     var pos = elem.position();
     var sz = elem.size();
-    var cx = pos[0] + sz[0] / 2;
-    var cy = pos[1] + sz[1] / 2;
-    ObjC.import('CoreGraphics');
-    var src = $.CGEventSourceCreate($.kCGEventSourceStateHIDSystemState);
-    var pt = $.CGPointMake(cx, cy);
-    var down = $.CGEventCreateMouseEvent(src, $.kCGEventLeftMouseDown, pt, $.kCGMouseButtonLeft);
-    $.CGEventPost($.kCGHIDEventTap, down);
-    var up = $.CGEventCreateMouseEvent(src, $.kCGEventLeftMouseUp, pt, $.kCGMouseButtonLeft);
-    $.CGEventPost($.kCGHIDEventTap, up);
-    return {x: cx, y: cy};
+    return {x: pos[0] + sz[0] / 2, y: pos[1] + sz[1] / 2};
   }
 `;
 
@@ -83,7 +76,7 @@ export async function clickElement(this: MacOSPlatform, elementId: string, app?:
     var _result = null;
     ${jxaElementActionHelpers()}
     ${JXA_STATE_SIGNATURE}
-    ${JXA_COORDINATE_CLICK}
+    ${JXA_BOUNDS_CENTER}
     var elemPath = ${elementIdLiteral};
     var appName = ${appLiteral};
     // 容忍大小写/空格/连字符/下划线变体（cc-switch vs CC Switch vs cc_switch）
@@ -103,15 +96,11 @@ export async function clickElement(this: MacOSPlatform, elementId: string, app?:
     if (!elem) {
       _result = {success: false, error: "Element not found: " + elemPath};
     } else if (preferCoord) {
-      // 启发式命中（Tauri 等已知静默吞 AXPress 的应用）：直接坐标点击
-      try {
-        coordinateClick(elem);
-        _result = {success: true, method: "coordinate", verified: false};
-      } catch(e) {
-        _result = {success: false, error: "Could not click element (coordinate): " + String(e.message || e)};
-      }
+      // 启发式命中（Tauri 等已知静默吞 AXPress 的应用）：请求坐标点击（TS 层执行 per-process）
+      var c = boundsCenter(elem);
+      _result = {success: true, needCoordinateClick: true, cx: c.x, cy: c.y};
     } else {
-      // AXPress + verify：采样前后状态签名，无变化则降级坐标
+      // AXPress + verify：采样前后状态签名，无变化则请求坐标点击
       var sigBefore = stateSignature(elem);
       var axpressThrew = false;
       try {
@@ -120,58 +109,50 @@ export async function clickElement(this: MacOSPlatform, elementId: string, app?:
         axpressThrew = true;
       }
       if (axpressThrew) {
-        // AXPress 抛异常 → 坐标 fallback
-        try {
-          coordinateClick(elem);
-          _result = {success: true, method: "coordinate", verified: false};
-        } catch(e2) {
-          _result = {success: false, error: "Could not click element: " + String(e2.message || e2)};
-        }
+        var c1 = boundsCenter(elem);
+        _result = {success: true, needCoordinateClick: true, cx: c1.x, cy: c1.y};
       } else {
-        // AXPress 未抛异常：spin 等待异步生效，再采样签名判断是否真的生效
         spinMs(80);
         var sigAfter = stateSignature(elem);
         if (sigBefore !== '' && sigAfter !== sigBefore) {
-          // 状态变化 → AXPress 生效
           _result = {success: true, method: "axpress", verified: true};
         } else if (sigBefore === '' && sigAfter === '') {
-          // 无可观测状态（纯按钮无 value/focused/selected）：无法 verify，
-          // 保守认为 AXPress 可能成功（不降级坐标，避免对正常按钮误伤）
           _result = {success: true, method: "axpress", verified: false};
         } else {
-          // 有可观测状态但无变化 → 静默吞，降级坐标
-          try {
-            coordinateClick(elem);
-            _result = {success: true, method: "coordinate", verified: false};
-          } catch(e3) {
-            _result = {success: false, error: "Could not click element (coordinate fallback): " + String(e3.message || e3)};
-          }
+          var c2 = boundsCenter(elem);
+          _result = {success: true, needCoordinateClick: true, cx: c2.x, cy: c2.y};
         }
       }
     }
     JSON.stringify(_result);
   `;
 
+  let result: { success: boolean; error?: string; method?: string; verified?: boolean; needCoordinateClick?: boolean; cx?: number; cy?: number };
   try {
     const out = execFileSync("osascript", [
       "-l", "JavaScript",
       "-e", jxaScript,
     ], { encoding: "utf-8", timeout: 15000 }).trim();
-
-    const result = JSON.parse(out);
-    if (!result.success) {
-      throw result.error
-        ? new Error(result.error)
-        : new ElementNotFoundError(elementId);
-    }
-    return {
-      method: (result.method as "axpress" | "coordinate") ?? "axpress",
-      verified: Boolean(result.verified),
-    };
+    result = JSON.parse(out);
   } catch (error) {
     rethrowElementActionError(error, "click_element", elementId);
     return { method: "axpress", verified: false }; // unreachable — rethrow throws
   }
+  if (!result.success) {
+    // Route through rethrowElementActionError so "element not found" / accessibility
+    // errors are converted to the proper UcuError subclasses (ElementNotFoundError etc.).
+    rethrowElementActionError(new Error(result.error || "click_element failed"), "click_element", elementId);
+  }
+  // JXA requested a coordinate click → perform it via the input layer (per-process
+  // when a pid is available, so the global cursor does not move).
+  if (result.needCoordinateClick && typeof result.cx === "number" && typeof result.cy === "number") {
+    await this.click(Math.round(result.cx), Math.round(result.cy), "left", false);
+    return { method: "coordinate", verified: false };
+  }
+  return {
+    method: (result.method as "axpress" | "coordinate") ?? "axpress",
+    verified: Boolean(result.verified),
+  };
 }
 
 export async function typeInElement(this: MacOSPlatform, elementId: string, text: string, app?: string, clearFirst?: boolean): Promise<void> {
@@ -537,7 +518,7 @@ export async function clickMenuBarExtra(this: MacOSPlatform, app: string, select
     var tgtName = ${tgtNameLiteral};
     var tgtDesc = ${tgtDescLiteral};
     ${JXA_STATE_SIGNATURE}
-    ${JXA_COORDINATE_CLICK}
+    ${JXA_BOUNDS_CENTER}
     // 容忍大小写/空格/连字符/下划线变体（cc-switch vs CC Switch vs cc_switch）
     var _norm = function(s) { return String(s||'').toLowerCase().split(' ').join('').split('-').join('').split('_').join(''); };
     var appNorm = _norm(appName);
@@ -559,9 +540,9 @@ export async function clickMenuBarExtra(this: MacOSPlatform, app: string, select
       ${resolveItemBlock}
       if (!_result && item) {
         if (preferCoord) {
-          // 启发式命中：直接坐标点击
-          coordinateClick(item);
-          _result = {success: true, method: "coordinate", verified: false};
+          // 启发式命中：请求坐标点击（TS 层执行 per-process）
+          var c0 = boundsCenter(item);
+          _result = {success: true, needCoordinateClick: true, cx: c0.x, cy: c0.y};
         } else {
           // AXPress + verify
           var sigBefore = stateSignature(item);
@@ -572,20 +553,18 @@ export async function clickMenuBarExtra(this: MacOSPlatform, app: string, select
             axpressThrew = true;
           }
           if (axpressThrew) {
-            coordinateClick(item);
-            _result = {success: true, method: "coordinate", verified: false};
+            var c1 = boundsCenter(item);
+            _result = {success: true, needCoordinateClick: true, cx: c1.x, cy: c1.y};
           } else {
             spinMs(80);
             var sigAfter = stateSignature(item);
             if (sigBefore !== '' && sigAfter !== sigBefore) {
               _result = {success: true, method: "axpress", verified: true};
             } else if (sigBefore === '' && sigAfter === '') {
-              // 托盘 status item 通常无可观测状态（无 value/selected）；AXPress 开菜单的效果
-              // 难以从 item 本身验证。保守认为成功（菜单是否打开由后续 find_element 判断）。
               _result = {success: true, method: "axpress", verified: false};
             } else {
-              coordinateClick(item);
-              _result = {success: true, method: "coordinate", verified: false};
+              var c2 = boundsCenter(item);
+              _result = {success: true, needCoordinateClick: true, cx: c2.x, cy: c2.y};
             }
           }
         }
@@ -605,6 +584,10 @@ export async function clickMenuBarExtra(this: MacOSPlatform, app: string, select
   const result = JSON.parse(out);
   if (!result.success) {
     throw new Error(`click_menu_bar_extra failed in ${app}: ${result.error}`);
+  }
+  if (result.needCoordinateClick && typeof result.cx === "number" && typeof result.cy === "number") {
+    await this.click(Math.round(result.cx), Math.round(result.cy), "left", false);
+    return { method: "coordinate", verified: false };
   }
   return {
     method: (result.method as "axpress" | "coordinate") ?? "axpress",

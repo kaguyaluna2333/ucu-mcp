@@ -35,6 +35,8 @@ export interface WindowInfo {
   };
   isMinimized: boolean;
   isOnScreen: boolean;
+  /** Real CGWindowID (kCGWindowNumber) — needed for per-process event posting (focus-without-raise). Undefined for JXA-fallback enumeration. */
+  windowNumber?: number;
 }
 
 export interface AppInfo {
@@ -51,6 +53,8 @@ export interface AppTarget {
   windowId?: string;
   title?: string;
   capturedAt: string;
+  /** Real CGWindowID for per-process event posting (focus-without-raise). Absent for tray targets. */
+  windowNumber?: number;
 }
 
 export interface BrowserContext {
@@ -166,6 +170,14 @@ export interface ScreenDescription {
   errors: Array<{ source: "ocr" | "ax" | "foreground" | "screen"; message: string }>;
 }
 
+/**
+ * How an input event was dispatched. "per-pid" = posted to the target process
+ * via SLEventPostToPid/CGEventPostToPid (no global cursor move, no foreground
+ * theft — Codex-style background operation). "hid-tap" = posted to the global
+ * HID event tap (moves the cursor; fallback when no pid or skylight unavailable).
+ */
+export type DispatchMethod = "per-pid" | "hid-tap";
+
 export interface Platform {
   // Screenshot
   screenshot(display?: number, region?: ScreenRegion, options?: ScreenshotOptions): Promise<Buffer>;
@@ -181,11 +193,11 @@ export interface Platform {
   listWindows(includeMinimized?: boolean): Promise<WindowInfo[]>;
   getWindowState(windowId?: string, depth?: number, includeBounds?: boolean): Promise<WindowState>;
 
-  // Mouse Actions
-  click(x: number, y: number, button?: "left" | "right" | "middle", doubleClick?: boolean): Promise<void>;
-  move(x: number, y: number): Promise<void>;
-  drag(startX: number, startY: number, endX: number, endY: number, button?: "left" | "right" | "middle", duration?: number): Promise<void>;
-  scroll(x: number, y: number, deltaX: number, deltaY: number): Promise<void>;
+  // Mouse Actions — return the dispatch method used (per-pid vs hid-tap).
+  click(x: number, y: number, button?: "left" | "right" | "middle", doubleClick?: boolean): Promise<DispatchMethod | void>;
+  move(x: number, y: number): Promise<DispatchMethod | void>;
+  drag(startX: number, startY: number, endX: number, endY: number, button?: "left" | "right" | "middle", duration?: number): Promise<DispatchMethod | void>;
+  scroll(x: number, y: number, deltaX: number, deltaY: number): Promise<DispatchMethod | void>;
 
   // Cursor State
   getCursorPosition(): CursorPosition;
@@ -193,9 +205,9 @@ export interface Platform {
   // OCR
   ocr(display?: number, region?: ScreenRegion): Promise<OcrResult>;
 
-  // Keyboard Actions
-  type(text: string, delay?: number): Promise<void>;
-  key(keys: string[]): Promise<void>;
+  // Keyboard Actions — return the dispatch method used.
+  type(text: string, delay?: number): Promise<DispatchMethod | void>;
+  key(keys: string[]): Promise<DispatchMethod | void>;
 
   // Accessibility (AX) Element Actions
   findElement(options: FindElementOptions): Promise<FindElementResponse>;

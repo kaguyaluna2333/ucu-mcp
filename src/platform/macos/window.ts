@@ -95,6 +95,7 @@ export async function focusApp(this: MacOSPlatform, app: string): Promise<AppTar
     windowId: target.id,
     title: target.title,
     capturedAt: new Date().toISOString(),
+    windowNumber: target.windowNumber,
   };
   return this.activeTarget;
 }
@@ -214,6 +215,7 @@ function listWindowsNative(this: MacOSPlatform): WindowInfo[] | null {
       bounds: w.bounds,
       isMinimized: !w.isOnScreen,
       isOnScreen: w.isOnScreen,
+      windowNumber: w.windowNumber,
     }));
   } catch {
     return null;

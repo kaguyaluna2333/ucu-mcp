@@ -15,48 +15,105 @@ import { promisify } from "node:util";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { logger } from "../util/logger.js";
+import type { DispatchMethod } from "../platform/base.js";
 
 const execFileAsync = promisify(execFile);
 
 // ── Native CGEvent helper (macOS) ──────────────────────────────────────
 // JXA (osascript -l JavaScript) cannot call CGEventPost without segfault.
 // We ship a small Swift binary that does native CGEvent injection instead.
+//
+// v0.6.0: two helpers. `skylight-helper` posts events per-process via
+// SLEventPostToPid (private SkyLight SPI) so the global cursor does NOT move
+// and the foreground is NOT stolen — matching Codex computer-use. `cgevent-helper`
+// (legacy) posts to the HID event tap, which moves the cursor. We prefer
+// skylight when a target pid is available; fall back to cgevent otherwise.
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // In dev: src/utils/input.ts → native/cgevent/cgevent-helper
 // In prod: dist/src/utils/input.js → dist/native/cgevent/cgevent-helper
-const nativeHelperPath = join(__dirname, "..", "..", "..", "native", "cgevent", "cgevent-helper");
-// Fallback: try from project root (dev mode)
-const nativeHelperPathAlt = join(__dirname, "..", "..", "native", "cgevent", "cgevent-helper");
+const cgeventHelperPath = join(__dirname, "..", "..", "..", "native", "cgevent", "cgevent-helper");
+const cgeventHelperPathAlt = join(__dirname, "..", "..", "native", "cgevent", "cgevent-helper");
+const skylightHelperPath = join(__dirname, "..", "..", "..", "native", "skylight", "skylight-helper");
+const skylightHelperPathAlt = join(__dirname, "..", "..", "native", "skylight", "skylight-helper");
 import { existsSync } from "node:fs";
-const resolvedNativePath = existsSync(nativeHelperPath) ? nativeHelperPath : nativeHelperPathAlt;
+const resolvedCgeventPath = existsSync(cgeventHelperPath) ? cgeventHelperPath : cgeventHelperPathAlt;
+const resolvedSkylightPath = existsSync(skylightHelperPath) ? skylightHelperPath : skylightHelperPathAlt;
 
-let _nativeAvailable: boolean | undefined;
-function isNativeAvailable(): boolean {
-  if (_nativeAvailable !== undefined) return _nativeAvailable;
+/** Per-process event target. When pid > 0, input is routed via skylight-helper (no cursor move). */
+export interface InputTarget {
+  pid?: number;
+  windowNumber?: number;
+}
+
+let _cgeventAvailable: boolean | undefined;
+let _skylightAvailable: boolean | undefined;
+
+function isCgeventAvailable(): boolean {
+  if (_cgeventAvailable !== undefined) return _cgeventAvailable;
   try {
-    const stdout = execFileSync(resolvedNativePath, [], {
+    const stdout = execFileSync(resolvedCgeventPath, [], {
       input: '{"command":"ping"}',
       encoding: "utf8",
       timeout: 3000,
     });
-    _nativeAvailable = stdout.includes('"ok"');
+    _cgeventAvailable = stdout.includes('"ok"');
   } catch {
-    _nativeAvailable = false;
+    _cgeventAvailable = false;
   }
-  return _nativeAvailable;
+  return _cgeventAvailable;
 }
 
-function runNativeChecked(payload: Record<string, unknown>): void {
-  const raw = execFileSync(resolvedNativePath, [], {
-    input: JSON.stringify(payload),
+function isSkylightAvailable(): boolean {
+  if (_skylightAvailable !== undefined) return _skylightAvailable;
+  if (!existsSync(resolvedSkylightPath)) { _skylightAvailable = false; return false; }
+  try {
+    const stdout = execFileSync(resolvedSkylightPath, [], {
+      input: '{"command":"ping"}',
+      encoding: "utf8",
+      timeout: 3000,
+    });
+    _skylightAvailable = stdout.includes('"ok"');
+  } catch {
+    _skylightAvailable = false;
+  }
+  return _skylightAvailable;
+}
+
+/** @deprecated use isCgeventAvailable — kept for external callers/tests. */
+function isNativeAvailable(): boolean {
+  return isCgeventAvailable();
+}
+
+/**
+ * Run an input command via the best available helper.
+ * - target.pid > 0 AND skylight available → skylight-helper (per-process, no cursor move). Returns "per-pid".
+ * - otherwise → cgevent-helper (HID tap, moves cursor). Returns "hid-tap".
+ * Throws on helper error.
+ */
+function runInputChecked(payload: Record<string, unknown>, target?: InputTarget): DispatchMethod {
+  const useSkylight = !!target?.pid && target.pid > 0 && isSkylightAvailable();
+  const helperPath = useSkylight ? resolvedSkylightPath : resolvedCgeventPath;
+  const fullPayload = useSkylight
+    ? { ...payload, pid: target!.pid, windowNumber: target!.windowNumber }
+    : payload;
+  const raw = execFileSync(helperPath, [], {
+    input: JSON.stringify(fullPayload),
     encoding: "utf8",
     timeout: 10000,
   }).trim();
   const resp = JSON.parse(raw);
   if (resp.error) {
+    // skylight SPI missing/unavailable → caller falls back to cgevent via the dispatch decision above.
+    // If skylight was chosen but errored at runtime, surface it so the caller can retry on HID-tap.
     throw new Error(`native helper error: ${resp.error}`);
   }
+  return useSkylight ? "per-pid" : "hid-tap";
+}
+
+/** @deprecated use runInputChecked — kept for external callers/tests. */
+function runNativeChecked(payload: Record<string, unknown>): void {
+  runInputChecked(payload);
 }
 
 // ── Dry-run mode ──────────────────────────────────────────────────────────
@@ -132,16 +189,16 @@ async function runJXA(script: string, timeout = 5000): Promise<string> {
 export async function click(
   x: number, y: number,
   button: "left" | "right" | "middle" = "left",
-  _platform: string = process.platform
-): Promise<void> {
+  _platform: string = process.platform,
+  target?: InputTarget
+): Promise<DispatchMethod | void> {
   if (isDryRun()) {
     logDryRun("click", { x, y, button });
     return;
   }
   if (_platform === "darwin") {
-    if (isNativeAvailable()) {
-      runNativeChecked({ command: "click", x, y, button });
-      return;
+    if (isCgeventAvailable() || isSkylightAvailable()) {
+      return runInputChecked({ command: "click", x, y, button }, target);
     }
     const btnType = { left: 0, right: 1, middle: 2 }[button];
     await runJXA(`
@@ -169,16 +226,16 @@ export async function click(
 export async function doubleClick(
   x: number, y: number,
   button: "left" | "right" | "middle" = "left",
-  _platform: string = process.platform
-): Promise<void> {
+  _platform: string = process.platform,
+  target?: InputTarget
+): Promise<DispatchMethod | void> {
   if (isDryRun()) {
     logDryRun("doubleClick", { x, y, button });
     return;
   }
   if (_platform === "darwin") {
-    if (isNativeAvailable()) {
-      runNativeChecked({ command: "doubleClick", x, y, button });
-      return;
+    if (isCgeventAvailable() || isSkylightAvailable()) {
+      return runInputChecked({ command: "doubleClick", x, y, button }, target);
     }
 
     const btnType = { left: 0, right: 1, middle: 2 }[button];
@@ -212,16 +269,16 @@ export async function doubleClick(
 
 export async function move(
   x: number, y: number,
-  _platform: string = process.platform
-): Promise<void> {
+  _platform: string = process.platform,
+  target?: InputTarget
+): Promise<DispatchMethod | void> {
   if (isDryRun()) {
     logDryRun("move", { x, y });
     return;
   }
   if (_platform === "darwin") {
-    if (isNativeAvailable()) {
-      runNativeChecked({ command: "move", x, y });
-      return;
+    if (isCgeventAvailable() || isSkylightAvailable()) {
+      return runInputChecked({ command: "move", x, y }, target);
     }
     await runJXA(`
       ObjC.import('CoreGraphics');
@@ -244,16 +301,16 @@ export async function drag(
   toX: number, toY: number,
   button: "left" | "right" | "middle" = "left",
   duration: number = 300,
-  _platform: string = process.platform
-): Promise<void> {
+  _platform: string = process.platform,
+  target?: InputTarget
+): Promise<DispatchMethod | void> {
   if (isDryRun()) {
     logDryRun("drag", { fromX, fromY, toX, toY, button, duration });
     return;
   }
   if (_platform === "darwin") {
-    if (isNativeAvailable()) {
-      runNativeChecked({ command: "drag", fromX, fromY, toX, toY, button, durationMs: duration });
-      return;
+    if (isCgeventAvailable() || isSkylightAvailable()) {
+      return runInputChecked({ command: "drag", fromX, fromY, toX, toY, button, durationMs: duration }, target);
     }
 
     const btnType = { left: 0, right: 1, middle: 2 }[button];
@@ -301,16 +358,16 @@ export async function scroll(
   x: number, y: number,
   deltaX: number,
   deltaY: number,
-  _platform: string = process.platform
-): Promise<void> {
+  _platform: string = process.platform,
+  target?: InputTarget
+): Promise<DispatchMethod | void> {
   if (isDryRun()) {
     logDryRun("scroll", { x, y, deltaX, deltaY });
     return;
   }
   if (_platform === "darwin") {
-    if (isNativeAvailable()) {
-      runNativeChecked({ command: "scroll", x, y, deltaX, deltaY });
-      return;
+    if (isCgeventAvailable() || isSkylightAvailable()) {
+      return runInputChecked({ command: "scroll", x, y, deltaX, deltaY }, target);
     }
     const verticalDelta = -deltaY;
     const horizontalDelta = deltaX;
@@ -342,8 +399,9 @@ export async function scroll(
 export async function typeText(
   text: string,
   delay: number = 20,
-  _platform: string = process.platform
-): Promise<void> {
+  _platform: string = process.platform,
+  target?: InputTarget
+): Promise<DispatchMethod | void> {
   if (isDryRun()) {
     logDryRun("typeText", { text: text.slice(0, 50), delay });
     return;
@@ -432,8 +490,8 @@ export async function typeText(
     // Process each batch
     for (const batch of batches) {
       if (batch.cgEvent && Array.isArray(batch.chars)) {
-        if (isNativeAvailable()) {
-          runNativeChecked({ command: "typeBatch", keys: batch.chars });
+        if (isCgeventAvailable() || isSkylightAvailable()) {
+          runInputChecked({ command: "typeBatch", keys: batch.chars }, target);
         } else {
           // Build a single JXA script that types all chars in this CGEvent batch
           const keyStatements = (batch.chars as Array<{ code: number; shift: boolean }>).map(({ code, shift }) => {
@@ -477,8 +535,9 @@ export async function typeText(
 export async function pressKey(
   key: string,
   modifiers: string[] = [],
-  _platform: string = process.platform
-): Promise<void> {
+  _platform: string = process.platform,
+  target?: InputTarget
+): Promise<DispatchMethod | void> {
   if (isDryRun()) {
     logDryRun("pressKey", { key, modifiers });
     return;
@@ -506,9 +565,8 @@ export async function pressKey(
       flags |= flag;
     }
 
-    if (isNativeAvailable()) {
-      runNativeChecked({ command: "pressKey", keyCode, flags });
-      return;
+    if (isCgeventAvailable() || isSkylightAvailable()) {
+      return runInputChecked({ command: "pressKey", keyCode, flags }, target);
     }
 
     await runJXA(`
@@ -537,8 +595,9 @@ export async function pressKey(
 
 export async function pressShortcut(
   keys: string[],
-  _platform: string = process.platform
-): Promise<void> {
+  _platform: string = process.platform,
+  target?: InputTarget
+): Promise<DispatchMethod | void> {
   if (isDryRun()) {
     logDryRun("pressShortcut", { keys });
     return;
@@ -548,7 +607,7 @@ export async function pressShortcut(
   }
   const modifiers = keys.slice(0, -1);
   const key = keys[keys.length - 1];
-  await pressKey(key, modifiers, _platform);
+  return await pressKey(key, modifiers, _platform, target);
 }
 
 // ── Cursor position ───────────────────────────────────────────────────────

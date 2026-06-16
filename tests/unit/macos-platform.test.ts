@@ -1473,13 +1473,17 @@ describe("MacOSPlatform menu bar extras (tray)", () => {
     const platform = new MacOSPlatform();
     await platform.clickElement("Safari/w0/1", "Safari").catch(() => {});
     const script = lastJxaScript();
-    // verify 原语必须存在
+    // verify 原语必须存在；坐标点击已移出 JXA（boundsCenter + needCoordinateClick 信号）
     expect(script).toContain("stateSignature");
     expect(script).toContain("spinMs");
-    expect(script).toContain("coordinateClick");
+    expect(script).toContain("boundsCenter");
+    expect(script).toContain("needCoordinateClick");
     expect(script).toContain("sigBefore");
     expect(script).toContain("sigAfter");
     expect(script).toContain("preferCoord");
+    // 不应再有 JXA 内的 HID-tap 坐标点击（已移到 TS input 层 per-process）
+    expect(script).not.toContain("CGEventPost");
+    expect(script).not.toContain("coordinateClick");
   });
 
   it("clickElement returns ClickResult with method/verified from JXA", async () => {
