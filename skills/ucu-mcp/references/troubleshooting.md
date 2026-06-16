@@ -30,6 +30,30 @@ to recovery steps (mirrors the runtime `recoveryHint`).
 
 ---
 
+## Click result signals (v0.5.1+)
+
+`click_element` and `click_menu_bar_extra` return `result.method` and
+`result.verified`. These are not errors — they tell you how confident to be:
+
+- **`method:"axpress", verified:true`** — AXPress changed observable state.
+  Proceed normally.
+- **`method:"axpress", verified:false`** — AXPress ran but the element exposed
+  no observable state (plain button, no value/focused/selected). It *probably*
+  worked, but re-observe with `screenshot`/`get_window_state` to be sure. A
+  `warnings[]` entry explains this.
+- **`method:"coordinate", verified:false`** — AXPress was silently swallowed
+  (Tauri/Electron custom controls) or threw; ucu-mcp fell back to a coordinate
+  click at the element's bounds center. **Coordinate clicks can miss** — always
+  re-observe. A `warnings[]` entry says "coordinate fallback was used".
+
+This is not a bug — it's the server telling you it couldn't fully confirm the
+click. The verify-then-fallback logic exists *because* Tauri/Electron controls
+silently swallow AXPress without throwing.
+
+---
+
+---
+
 ## Permission Issues
 
 macOS requires two permissions for full functionality:

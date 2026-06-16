@@ -421,11 +421,13 @@ The same readiness report is also available as the MCP `doctor` tool.
 
 ## Agent Skill
 
-UCU-MCP ships an installable **agent skill** that gives Codex, Claude Code, and
-other agent runtimes richer guidance than the embedded MCP `instructions:` field
-alone — structured tool-selection rules, task playbooks, and an error-recovery
-reference. The skill lives at [`skills/ucu-mcp/`](skills/ucu-mcp/SKILL.md) and
-is included in the npm tarball.
+UCU-MCP ships an installable **agent skill** written for **CLI agents** (Claude
+Code, Codex, OpenCode) that connect via stdio MCP and drive the desktop one
+tool call at a time. It gives richer guidance than the embedded MCP
+`instructions:` field: a decision loop (observe → decide → act → verify),
+tool-selection rules (AX-first / vision-fallback / tray), click-result signal
+interpretation (`method`/`verified`), task playbooks, and an error-recovery
+reference.
 
 Install it for your agent runtime with the [`skills` CLI](https://www.npmjs.com/package/skills):
 

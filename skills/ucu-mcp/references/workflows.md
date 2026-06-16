@@ -1,146 +1,209 @@
 # Workflows
 
-Common task playbooks. Each shows the preferred tool sequence and the fallback
-path when the primary path is blocked.
+CLI-executable playbooks. Each is a sequence of tool calls you make one at a
+time, reading each response before the next. Coordinates are screen-absolute
+unless noted.
 
 ---
 
-## 1. Fill a form field
+## 1. Fill a form field (native app, AX-visible)
 
-**Primary (AX):**
 ```
-focus_app("Safari")
-find_element({ text: "Email", role: "AXTextField" })
-  → elementId "Safari/w0/42"
+# 1. establish target
+list_apps({})
+focus_app({ app: "Safari" })
+
+# 2. locate the field via AX
+find_element({ text: "Email", role: "AXTextField", app: "Safari" })
+# → response.result.results[0].id  e.g. "Safari/w0/42"
+
+# 3. type into it
 type_in_element({ elementId: "Safari/w0/42", text: "user@example.com" })
+
+# 4. verify (captureAfter returns a screenshot in the same reply)
+type_in_element({ elementId: "Safari/w0/42", text: "...", captureAfter: true })
 ```
 
-**Fallback (AX value set, for non-text controls):**
-```
-set_value({ elementId: "...", value: "option" })
-```
+**If `find_element` returns 0** with an "app is likely Electron" hint → switch
+to workflow #3 (vision fallback).
 
-**Fallback (coordinates, when AX is opaque):**
-```
-screenshot({})
-ocr({})  → blocks[].text === "Email" → {x, y, width, height}
-click({ x: block.x + block.width/2, y: block.y + block.height/2 })
-type_text({ text: "user@example.com" })
-```
+**If `type_in_element` throws TARGET_STALE** → `focus_app("Safari")` then retry
+(it auto-refetches equivalent AX nodes).
 
 ---
 
 ## 2. Operate a menu-bar / tray app (e.g. cc-switch)
 
-Tray apps' status items live in `SystemUIServer`, not the app's own window AX
-tree. `focus_app` alone may return `WINDOW_NOT_FOUND`.
+Tray-only apps (LSUIElement) have no window; their status item is hosted by
+`SystemUIServer`. `focus_app` alone returns `WINDOW_NOT_FOUND` unless ucu-mcp
+finds a tray status item and falls back to a tray target.
 
 ```
-focus_app("cc-switch")           # establishes tray target if status item found
-click_menu_bar_extra({ app: "cc-switch", name: "switch" })  # opens the menu
-# menu is now open — find items inside it:
-find_element({ text: "使用统计", app: "cc-switch" })
-  → elementId
-click_element({ elementId })
-```
+# 1. establish tray target (returns windowId:"tray" on success)
+focus_app({ app: "cc-switch" })
 
-If the menu's AX tree is opaque (some Tauri/Electron menus):
-```
-click_menu_bar_extra({ app: "cc-switch" })
+# 2. open the tray menu — check result.verified!
+click_menu_bar_extra({ app: "cc-switch", name: "switch" })
+# → result: { clicked: true, method: "axpress", verified: true|false }
+
+# 3a. IF the menu exposes AX items, find and click them:
+find_element({ text: "Settings", app: "cc-switch" })
+click_element({ elementId: "..." })
+
+# 3b. IF find_element returns 0 (menu is also opaque), use vision:
 screenshot({})
-ocr({})  → locate "使用统计" by text → coordinates
-click({ x, y })
-```
-
----
-
-## 3. Electron / WebView opaque UI
-
-Electron/Tauri apps often expose only a near-empty `AXGroup`. The runtime `hint`
-on `find_element` and `list_windows` tells you when this is happening.
-
-```
-find_element({ text: "Submit" })
-  → 0 results, hint: "app is likely Electron... screenshot → ocr → click(x,y)"
-
-screenshot({})
-ocr({ region: { x, y, width, height } })  # or full screen
-  → blocks[].text === "Submit" → {x, y, width, height}
+ocr({})
+# → find the menu item text in ocr.blocks, compute center, click:
 click({ x: block.x + block.width/2, y: block.y + block.height/2 })
 ```
 
-For repeated interaction with a known-opaque app, snapshot once with
-`describe_screen` to plan, then drive by coordinates.
+**Known gotcha (cc-switch and similar Tauri tray apps):** `click_menu_bar_extra`
+may open the app's **native application menu** (About / Hide / Quit) rather than
+a custom tray popup. If OCR shows only About/Hide/Quit, the app's real settings
+live in a **WebView window** — you need to open that window first (via a menu
+item, or `focus_app` once a window exists), then drive it with workflow #3
+(Electron-opaque). Don't keep clicking the tray expecting a custom menu.
+
+**If `click_menu_bar_extra` returns `method:"coordinate"`** (AXPress was
+swallowed) → re-observe with `screenshot` to confirm the menu actually opened
+before searching its contents.
 
 ---
 
-## 4. Vision-degraded environment (image content not visible)
+## 3. Electron / Tauri / WebView opaque UI
 
-When the model cannot see `screenshot` image blocks (relay/downgrade to URLs),
-switch to text-based screen reading:
+Electron/Tauri apps render UI in a composited layer AX cannot introspect.
+`find_element` returns 0; `get_window_state` shows a near-empty `AXGroup`;
+`list_windows` emits an Electron hint.
+
+```
+# 1. confirm opacity (optional — the hint in the error tells you)
+find_element({ text: "Submit" })
+# → 0 results, hint: "...likely Electron... screenshot → ocr → click(x,y)"
+
+# 2. see the screen via OCR (text + bounding boxes)
+screenshot({})              # for yourself, if you can see images
+ocr({})                     # → blocks[].text with {x, y, width, height}
+
+# 3. locate target text, compute click center, click by coordinate
+#    (OCR coordinates are screen-absolute)
+click({ x: block.x + block.width/2, y: block.y + block.height/2 })
+
+# 4. verify the coordinate click landed (coordinate clicks are unverifiable)
+screenshot({})  # or describe_screen({}) if you can't see images
+```
+
+For multi-step interaction with a known-opaque app, call `describe_screen` once
+to plan, then drive by coordinates. Keep re-OCR-ing between steps — WebView
+layouts shift.
+
+---
+
+## 4. Vision-degraded environment (you can't see image content)
+
+When `screenshot` image blocks are downgraded to URLs you cannot fetch, switch
+to text-based screen reading:
 
 ```
 describe_screen({ ocr: true, includeAx: true })
-  → { screen, foregroundWindow, ocr:{blocks}, ax:{elements}, errors }
+# → { capturedAt, screen, foregroundWindow, ocr:{blocks, status}, ax:{elements, status}, errors }
 
-# or, if you also want the image for clients that DO support it:
-screenshot({ describe: true })
-  → [image block, text description block]
+# OCR blocks give you text + screen coordinates — drive by click(x,y)
+# AX elements give you a tree you can find_element/click_element on
 ```
 
-`describe_screen` never throws — OCR and AX each try/catch independently, so a
-Vision failure still returns AX state and vice versa. Check `errors[]` to know
-what was skipped/failed.
+`describe_screen` **never throws** — OCR and AX each try/catch independently.
+Check `errors[]` to see what was skipped/failed, and `ocr.status` / `ax.status`
+(`"ok"` / `"skipped"` / `"failed"`). If OCR failed, fall back to AX-only
+(`includeAx: true, ocr: false`); if AX failed, fall back to OCR-only.
+
+`screenshot({ describe: true })` returns both an image (for clients that can
+see it) **and** a text description block — use this when you're unsure whether
+your client renders images.
 
 ---
 
 ## 5. Recover from TARGET_STALE
 
-The active window target can go stale (window closed, app restarted, pid
-changed). AX tools throw `TARGET_STALE`.
+The active window target goes stale when the window closes, the app restarts,
+or the pid changes. AX tools throw `TARGET_STALE` (receipt includes a `hint`).
 
 ```
-# error response includes hint: "Run focus_app again for the target app..."
-focus_app("Safari")              # re-establishes target
-find_element({ text: "Save" })   # retry — cache refetches equivalent nodes
-click_element({ elementId })
+# 1. re-establish the target
+focus_app({ app: "Safari" })
+
+# 2. retry — element cache refetches equivalent AX nodes
+find_element({ text: "Save" })
+click_element({ elementId: "..." })
 ```
 
-`type_in_element` automatically refetches an equivalent AX node if the original
-`elementId` is stale, so a single retry often succeeds without `focus_app`.
+`type_in_element` auto-refetches an equivalent AX node if the `elementId` is
+stale, so a single retry often succeeds without re-running `focus_app`.
 
 ---
 
-## 6. Verify an action succeeded
+## 6. Verify a click succeeded (v0.5.1+)
 
-Always verify after clicks/types — UI may not have updated, or the wrong element
-was hit.
+Every `click_element` / `click_menu_bar_extra` response includes `result.method`
+and `result.verified`. Use them to decide whether to trust the click:
 
 ```
-click_element({ elementId, captureAfter: true })   # screenshot in response
-# or explicitly:
-screenshot({})
-# or check AX state:
-get_window_state({})  → focusedElement / tree reflects the change
-# or wait for a specific change:
-wait_for_element({ text: "Saved", until: "appear", timeout: 3000 })
+click_element({ elementId: "btn1" })
+# → result: { clicked: true, method: "axpress", verified: true }
+#   ✓ AXPress changed observable state — proceed with confidence
+
+# OR
+# → result: { clicked: true, method: "coordinate", verified: false }
+#   warnings: ["AXPress produced no observable state change...coordinate fallback..."]
+#   ⚠ MUST re-observe — coordinate clicks can miss or hit the wrong spot:
+screenshot({})            # see where you are now
+# or
+get_window_state({})      # check AX state changed as expected
+# or
+wait_for_element({ text: "Success", until: "appear", timeout: 3000 })
 ```
+
+**Rule: `verified:false` always triggers a follow-up observation.** Do not chain
+another action on top of an unverifiable click.
 
 ---
 
-## 7. Multi-step task with error recovery
+## 7. Multi-step task with full loop
+
+A realistic CLI sequence with observe → decide → act → verify at each step:
 
 ```
-doctor()                                  # verify permissions first
-list_apps()
-focus_app("Notes")
-find_element({ text: "New Note" }) → id
-click_element({ elementId: id, captureAfter: true })
+# setup
+doctor({})                         # permissions + helpers green?
+list_apps({})
+focus_app({ app: "Notes" })
 
-# if click_element throws ELEMENT_NOT_FOUND:
-find_element({ text: "New Note" }) → id2  # refetch, id may have changed
+# step 1: find and click "New Note"
+find_element({ text: "New Note" })        # → id "Notes/w0/3"
+click_element({ elementId: "Notes/w0/3", captureAfter: true })
+# read result.verified; if false → screenshot to confirm a new note opened
+
+# step 2: if ELEMENT_NOT_FOUND (UI shifted), refetch
+find_element({ text: "New Note" })        # → id2 (may differ)
 click_element({ elementId: id2 })
 
-type_in_element({ elementId: bodyId, text: "Hello" })
-screenshot({})                            # confirm content
+# step 3: type into the new note body
+find_element({ role: "AXTextArea" })      # → bodyId
+type_in_element({ elementId: bodyId, text: "Hello", captureAfter: true })
+
+# step 4: confirm
+screenshot({})                            # or describe_screen({}) if vision-degraded
 ```
+
+---
+
+## 8. When you're stuck — diagnostic order
+
+If tools keep failing and you don't know why:
+
+1. `doctor({})` — permissions/helpers still green? (Screen may have re-locked.)
+2. `list_apps({})` + `list_windows({})` — is the target app/window still there?
+3. `screenshot({})` or `describe_screen({})` — what's *actually* on screen right
+   now? (You may be looking at a different app than you think.)
+4. Read the `hint` in the last error response — it names the recovery step.
+5. Check [troubleshooting.md](troubleshooting.md) for the error code.

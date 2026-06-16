@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-06-17
+
+Agent Skill 重写为 CLI agent 优先（Claude Code / Codex / OpenCode 都是 stdio CLI 环境）。
+
+### Changed
+
+- **SKILL.md 重写**：Core Workflow 改为"决策循环"状态机视角（observe → decide → act → verify），强调 CLI agent 每次工具调用无状态、必须每次重新观察。新增"Reading click results"表（v0.5.1 的 method/verified 信号解读：axpress+true 放心走 / axpress+false 复核 / coordinate+false 必须重新观察）。工具选择改为 AX-first / vision-fallback / tray 三分法。Operating Rules 第一条改为"Re-observe before every action"。
+- **workflows.md 重写**：所有 playbook 改为 CLI 可执行序列（每步读响应再决定下一步）。cc-switch playbook（#2）补充真实 gotcha：click_menu_bar_extra 打开的是原生应用菜单（About/Hide/Quit），"使用统计"在 WebView 设置窗口内；托盘菜单在独立调用间会自动关闭，必须用 captureAfter 单次捕获。新增 workflow #6（verify click 结果）和 #8（卡住时的诊断顺序）。
+- **troubleshooting.md**：新增"Click result signals (v0.5.1+)"节，解释 method/verified 不是错误而是置信度信号。
+- **README** Agent Skill 节：明确"为 CLI agent 编写"。
+
+### 真机验证（按重写后的 skill workflow 重跑）
+
+- ✅ doctor ready / focus_app(cc-switch) 建 tray target / click_menu_bar_extra 返回 method:axpress verified:true。
+- ✅ 验证了 skill 的核心价值：workflow #2 的 gotcha 指引正确诊断出 cc-switch 托盘菜单只有 About/Hide/Quit（原生应用菜单），"使用统计"需开 WebView 设置窗口。
+- ⚠️ 发现真实 CLI 痛点：cc-switch 托盘菜单在独立 ocr 调用间自动关闭（失焦即关），必须用 captureAfter 在单次 click_menu_bar_extra 调用里捕获——这正是 skill 新 workflow #6 强调的"单次调用捕获"模式。
+
 ## [0.5.1] - 2026-06-16
 
 方向4b AXPress verify-then-fallback + 方向5 FocusStealSuppression @deprecated 文档化。

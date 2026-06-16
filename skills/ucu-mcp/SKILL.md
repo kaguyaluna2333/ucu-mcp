@@ -5,96 +5,134 @@ description: >-
   click, type, OCR, AX element tools, menu-bar tray support). Use when an
   agent needs to automate macOS desktop apps over MCP — establishing target
   context, reading screen state, interacting with UI elements, operating
-  menu-bar/tray apps, or recovering from AX/permission errors. Covers Claude
-  Code CLI/Desktop, Codex, OpenCode, and other MCP clients.
+  menu-bar/tray apps, or recovering from AX/permission errors. Designed for
+  CLI agents (Claude Code, Codex, OpenCode) that connect via stdio MCP and
+  drive the desktop one tool call at a time.
 ---
 
 # UCU-MCP
 
-UCU-MCP is a cross-client computer-use MCP server for macOS (Windows/Linux are
-explicit stubs). It exposes 26 tools that let an agent see the screen and drive
-native apps through a combination of Accessibility (AX) APIs, CGEvent input
-synthesis, Vision OCR, and ScreenCaptureKit screenshots.
+UCU-MCP is a macOS computer-use MCP server for CLI agents. It exposes 26 tools
+that let you see the screen and drive native apps through Accessibility (AX)
+APIs, CGEvent input synthesis, Vision OCR, and ScreenCaptureKit screenshots.
+Windows/Linux are explicit stubs.
 
-- npm package: `ucu-mcp`
-- Run: `npx -y ucu-mcp` (stdio MCP server) or install globally via `npm i -g ucu-mcp`
+- npm: `ucu-mcp` · run: `npx -y ucu-mcp` (stdio MCP server)
+- You are a **CLI agent**: each tool call is one MCP request over stdio. There
+  is no persistent UI session between calls — **always re-observe state before
+  acting**, because the user or the app may have changed the screen since your
+  last call.
 
-## Core Workflow
+## The Decision Loop (run this for every action)
 
-1. **Check readiness** → `doctor` verifies Accessibility + Screen Recording
-   permissions and native helpers. If anything is missing, follow its guidance
-   (see [troubleshooting](references/troubleshooting.md)).
-2. **Establish target context** → `list_apps` then `focus_app(name)` sets the
-   active window target. Subsequent AX tools operate against that target.
-3. **Prefer AX over coordinates** → `find_element(text/role/value)` →
-   `click_element` / `type_in_element` / `set_value`. AX is precise and survives
-   layout shifts; coordinates are a last resort.
-4. **When AX is opaque (Electron/Tauri/WebView)** → `screenshot` + `ocr` to
-   locate text by bounding box, then `click(x, y)` at the returned coordinates.
-5. **When image content is not visible to you** (relayed/downgraded to a URL) →
-   `screenshot(describe: true)` or the standalone `describe_screen` tool to get a
-   structured text view (OCR blocks + AX tree + foreground window).
-6. **Menu-bar/tray apps** (e.g. cc-switch) → `click_menu_bar_extra(app,
-   description/name/index)` opens the tray menu, then `find_element` inside it.
-7. **Verify actions** → pass `captureAfter: true` on action tools, or call
-   `screenshot` / `get_window_state` afterwards.
-8. **Recover from errors** → every error response carries a `hint` with the
-   next step. See the [error code table](references/troubleshooting.md).
+Think in cycles of **observe → decide → act → verify**. Do not chain actions
+blindly; the desktop is a moving target.
 
-Full tool inventory with parameters: [tool-reference](references/tool-reference.md).
-Common task playbooks: [workflows](references/workflows.md).
+```
+┌─────────────────────────────────────────────────────────────┐
+│  OBSERVE: what's on screen / what's focused right now?      │
+│    screenshot{}  ·  describe_screen{}  ·  get_window_state{} │
+├─────────────────────────────────────────────────────────────┤
+│  DECIDE: AX-first, coordinates only as fallback              │
+│    AX tree exposes target? → find_element → element tools   │
+│    AX opaque (Electron/Tauri)? → ocr → click(x,y)           │
+│    Tray-only app? → click_menu_bar_extra                    │
+├─────────────────────────────────────────────────────────────┤
+│  ACT: click_element / type_in_element / set_value / click   │
+│    Pass captureAfter:true to get a screenshot in the reply  │
+├─────────────────────────────────────────────────────────────┤
+│  VERIFY: did it work? (see "Reading click results" below)   │
+│    result.verified === true   → proceed                     │
+│    result.verified === false  → screenshot/get_window_state │
+│    result.method === "coordinate" → re-observe, may be off  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Reading click results (v0.5.1+)
+
+`click_element` and `click_menu_bar_extra` return a `result` object with
+`method` and `verified` fields. **Read them every time** — they tell you
+whether your click actually landed:
+
+| `method` | `verified` | Meaning | What you do |
+|---|---|---|---|
+| `"axpress"` | `true` | AXPress changed observable state (value/focused/selected) | Proceed — high confidence it worked |
+| `"axpress"` | `false` | AXPress ran but element had no observable state to verify (e.g. plain button) | Verify via `screenshot` or `get_window_state` |
+| `"coordinate"` | `false` | AXPress was silently swallowed (Tauri/Electron) OR threw; fell back to coordinate click | **Always re-observe** — coordinate clicks can miss, or the app may need a second click |
+
+A `warnings[]` array in the receipt explains the fallback. Never assume a
+coordinate-fallback click succeeded without checking.
+
+## Tool selection — AX vs vision vs tray
+
+**AX-first** (precise, survives layout shifts):
+`find_element` → `click_element` / `type_in_element` / `set_value`. Use when
+the app exposes an AX tree (native macOS apps, most non-Electron apps).
+
+**Vision fallback** (when AX is opaque — Electron/Tauri/WebView return an
+empty `AXGroup` or `find_element` returns 0 with an "app is likely Electron"
+hint):
+`screenshot` → `ocr` → compute click point from the OCR block's bounding box
+→ `click(x, y)` at `block.x + block.width/2, block.y + block.height/2`.
+
+**Text-only fallback** (when you cannot see image content blocks — relay
+downgrades them to URLs):
+`describe_screen` or `screenshot({describe: true})` → structured text with OCR
+blocks + AX tree. Password fields are masked to `[REDACTED]`.
+
+**Tray apps** (menu-bar-only / LSUIElement apps like cc-switch — no window, no
+AX tree entry):
+`focus_app` (falls back to a tray target) → `click_menu_bar_extra` opens the
+menu → `find_element` inside the menu, or `screenshot`+`ocr` if the menu is
+also opaque.
+
+## First-run setup
+
+1. **Connect the server** to your CLI agent:
+
+   Codex / generic TOML (`.codex/config.toml` or equivalent):
+   ```toml
+   [mcp_servers.ucu-mcp]
+   command = "npx"
+   args = ["-y", "ucu-mcp"]
+   ```
+
+   Claude Code CLI:
+   ```bash
+   claude mcp add ucu-mcp -- npx -y ucu-mcp
+   ```
+
+2. **Grant macOS permissions** — Accessibility **and** Screen Recording must be
+   enabled for your terminal/client in System Settings → Privacy & Security.
+   **Restart the client after granting** (changes don't apply to running
+   processes).
+
+3. **Verify** — call `doctor`. It reports per-permission status, native helper
+   health, and which process to authorize. Green = ready.
 
 ## Operating Rules
 
-- **AX-first.** Use `find_element` → `click_element` / `type_in_element` /
-  `set_value` whenever the AX tree exposes the target. Fall back to coordinates
-  only when AX returns nothing (Electron/WebView) or the control silently
-  swallows AX actions.
-- **Observe before acting.** Call `screenshot` / `get_window_state` /
-  `describe_screen` before destructive or hard-to-reverse actions so you act on
-  current state, not assumptions.
+- **Re-observe before every action.** The screen changes between your calls.
+  A `focus_app` from 5 calls ago may be stale; a window may have closed.
+- **AX-first, coordinates only as fallback.** AX clicks are precise and
+  verifiable; coordinate clicks can drift and are unverifiable.
+- **`verified:false` means re-observe.** Never trust an unverifiable click
+  without a follow-up `screenshot` or `get_window_state`.
 - **TARGET_STALE is recoverable.** Re-run `focus_app` for the target app, then
-  retry — the element cache refetches equivalent AX nodes.
-- **Tray apps need `click_menu_bar_extra`.** `focus_app` alone cannot reach
-  pure menu-bar (LSUIElement) apps; their status item is hosted by
-  `SystemUIServer` and is not in any app window's AX tree.
-- **Dangerous actions are blocked.** Quit/logout/lock shortcuts (`cmd+q`,
-  `cmd+shift+q`, `cmd+l`, …), sensitive-window URLs, and suspicious injected
-  text are rejected by the safety guard. Choose a safer action or ask the user.
-- **Sensitive fields are masked in `describe_screen`.** Password fields
-  (`AXSecureTextField`, or names matching `/password|secret|token/i`) appear as
-  `[REDACTED]` — never try to read or exfiltrate them.
-- **macOS is locked → actions blocked.** The server refuses to synthesize input
-  while the screen is locked; wait for unlock or ask the user.
-
-## MCP Config
-
-Add UCU-MCP to your MCP client. Stdio transport, no arguments needed.
-
-**Codex / generic TOML:**
-
-```toml
-[mcp_servers.ucu-mcp]
-command = "npx"
-args = ["-y", "ucu-mcp"]
-```
-
-**Claude Code CLI / Desktop** — add via `claude mcp add`:
-
-```bash
-claude mcp add ucu-mcp -- npx -y ucu-mcp
-```
-
-Run `ucu-mcp doctor` once after first connect to verify macOS permissions
-(System Settings → Privacy & Security → Accessibility **and** Screen Recording
-must be granted to the launching terminal/client).
+  retry. `type_in_element` auto-refetches equivalent AX nodes.
+- **Dangerous actions are blocked.** `cmd+q`, `cmd+shift+q`, `cmd+l`, `alt+f4`,
+  sensitive-window URLs, and suspicious injected text are rejected. Choose a
+  safer action or ask the user.
+- **macOS locked → all input blocked.** Wait for unlock; there is no bypass.
+- **Don't exfiltrate passwords.** `describe_screen` masks them to
+  `[REDACTED]`; respect that.
 
 ## References
 
 - [tool-reference.md](references/tool-reference.md) — all 26 tools, parameters,
   return shapes, and when to use each.
-- [workflows.md](references/workflows.md) — playbooks for common tasks: form
+- [workflows.md](references/workflows.md) — CLI-executable playbooks (form
   filling, tray apps, opaque Electron UIs, vision-degraded environments, stale
-  targets.
+  targets, click-result verification).
 - [troubleshooting.md](references/troubleshooting.md) — error code table with
   recovery steps, permission issues, AX-opacity workarounds, OCR failures.

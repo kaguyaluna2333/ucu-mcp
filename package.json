@@ -1,6 +1,6 @@
 {
   "name": "ucu-mcp",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "MCP server for Universal Computer Use — desktop automation for AI agents via Model Context Protocol",
   "type": "module",
   "bin": {
