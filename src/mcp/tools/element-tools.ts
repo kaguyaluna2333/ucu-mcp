@@ -48,8 +48,13 @@ export function registerElementTools(registerTool: RegisterToolFn): void {
   }, async (params) => {
     const effectiveApp = params.app || getActiveTarget()?.appName;
     const safetyCtx = await getSafetyContext();
-    await withSafety<void>({ action: "click_element", params: { ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().clickElement(params.elementId, effectiveApp) });
-    return actionResponse("click_element", { clicked: true, elementId: params.elementId }, { elementId: params.elementId, app: effectiveApp }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    const clickResult = await withSafety<import("../../platform/base.js").ClickResult>({ action: "click_element", params: { ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().clickElement(params.elementId, effectiveApp) });
+    const warnings = clickResult.verified
+      ? []
+      : [clickResult.method === "coordinate"
+        ? "AXPress produced no observable state change (or the app is known to silently swallow it); coordinate fallback was used. Re-observe with screenshot/get_window_state to confirm."
+        : "AXPress completed but the element exposed no observable state to verify against. Re-observe with screenshot/get_window_state to confirm."];
+    return actionResponse("click_element", { clicked: true, elementId: params.elementId, method: clickResult.method, verified: clickResult.verified }, { elementId: params.elementId, app: effectiveApp }, params.captureAfter, params.captureFormat, params.captureMaxWidth, warnings);
   });
 
   registerTool("set_value", "Set the value of an accessibility element", {
@@ -79,7 +84,12 @@ export function registerElementTools(registerTool: RegisterToolFn): void {
     ...captureAfterFields,
   }, async (params) => {
     const safetyCtx = await getSafetyContext();
-    await withSafety<void>({ action: "click_menu_bar_extra", params: { ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().clickMenuBarExtra!(params.app, { description: params.description, name: params.name, index: params.index }) });
-    return actionResponse("click_menu_bar_extra", { clicked: true, app: params.app }, { app: params.app }, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    const clickResult = await withSafety<import("../../platform/base.js").ClickResult>({ action: "click_menu_bar_extra", params: { ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().clickMenuBarExtra!(params.app, { description: params.description, name: params.name, index: params.index }) });
+    const warnings = clickResult.verified
+      ? []
+      : [clickResult.method === "coordinate"
+        ? "AXPress produced no observable state change; coordinate fallback was used. Use find_element or screenshot to confirm the menu opened."
+        : "AXPress completed but the status item exposed no observable state to verify against. Use find_element or screenshot to confirm the menu opened."];
+    return actionResponse("click_menu_bar_extra", { clicked: true, app: params.app, method: clickResult.method, verified: clickResult.verified }, { app: params.app }, params.captureAfter, params.captureFormat, params.captureMaxWidth, warnings);
   });
 }

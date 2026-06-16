@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import type { Platform, ScreenRegion, ScreenSize, CursorPosition, WindowInfo, WindowState, OcrResult, FindElementOptions, FindElementResponse } from "./base.js";
+import type { Platform, ScreenRegion, ScreenSize, CursorPosition, WindowInfo, WindowState, OcrResult, FindElementOptions, FindElementResponse, ClickResult } from "./base.js";
 import { PlatformError } from "../util/errors.js";
 
 function runPowerShell(script: string, input?: string): string {
@@ -68,7 +68,7 @@ export class WindowsPlatform implements Platform {
     throw new Error("Not implemented: Windows findElement");
   }
 
-  async clickElement(_elementId: string, _app?: string): Promise<void> {
+  async clickElement(_elementId: string, _app?: string): Promise<ClickResult> {
     throw new Error("Not implemented: Windows clickElement");
   }
 

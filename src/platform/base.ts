@@ -140,6 +140,18 @@ export interface WindowState {
 }
 
 /**
+ * Outcome of an AX-driven click — surfaces whether AXPress was used and whether
+ * its effect was observable. `verified:false` means either the element exposed
+ * no observable state (inconclusive) or the click fell back to coordinates
+ * (silent AXPress swallow on Tauri/Electron). The tool layer surfaces this so
+ * the model can decide whether to re-observe via screenshot/get_window_state.
+ */
+export interface ClickResult {
+  method: "axpress" | "coordinate";
+  verified: boolean;
+}
+
+/**
  * Structured text description of the screen — a fallback for environments where
  * image content blocks are downgraded to URLs (so the model cannot see screenshots).
  * Each source (OCR / AX / foreground) is collected independently; failures are
@@ -187,17 +199,18 @@ export interface Platform {
 
   // Accessibility (AX) Element Actions
   findElement(options: FindElementOptions): Promise<FindElementResponse>;
-  clickElement(elementId: string, app?: string): Promise<void>;
+  clickElement(elementId: string, app?: string): Promise<ClickResult>;
   typeInElement(elementId: string, text: string, app?: string, clearFirst?: boolean): Promise<void>;
   setElementValue?(elementId: string, value: string, app?: string): Promise<void>;
   // 菜单栏 status item（托盘应用，LSUIElement）。macOS 专有，Windows/Linux 可不实现。
   findMenuBarExtra?(app: string): Promise<unknown[]>;
-  clickMenuBarExtra?(app: string, selector?: { description?: string; name?: string; index?: number }): Promise<void>;
+  clickMenuBarExtra?(app: string, selector?: { description?: string; name?: string; index?: number }): Promise<ClickResult>;
 
   // Safety State
   isScreenLocked?(): boolean;
 
-  // Focus Management
+  // Focus Management — @deprecated: intentionally disabled (CGEvent works at HID layer,
+  // no frontmost requirement). Retained for API compat; not called from the action pipeline.
   saveFocus?(): Promise<void>;
   restoreFocus?(): Promise<void>;
 

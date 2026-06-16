@@ -1,8 +1,24 @@
 import { execFileSync } from "node:child_process";
 import type { MacOSPlatform } from "./base.js";
+import type { ClickResult } from "../base.js";
 import { ElementNotFoundError } from "../../util/errors.js";
 import { rethrowElementActionError } from "./helpers.js";
 import { jxaElementActionHelpers } from "../jxa-helpers.js";
+
+/**
+ * App-name hints for which AXPress is known to be silently swallowed
+ * (Tauri custom window decorations, some Electron controls). When the target
+ * app matches, clickElement/clickMenuBarExtra skip AXPress and go straight to
+ * a coordinate click. Conservative starting set — extend as more silent-swallow
+ * apps are confirmed.
+ */
+const AX_SILENT_APP_HINTS = ["tauri"];
+
+function preferCoordinateClick(appName?: string): boolean {
+  if (!appName) return false;
+  const n = appName.toLowerCase();
+  return AX_SILENT_APP_HINTS.some((h) => n.includes(h));
+}
 
 function prepareCache(this: MacOSPlatform, elementId: string) {
   this.evictExpiredCacheEntries();
@@ -13,23 +29,68 @@ function prepareCache(this: MacOSPlatform, elementId: string) {
   return this.elementCache.get(elementId) ?? null;
 }
 
-export async function clickElement(this: MacOSPlatform, elementId: string, app?: string): Promise<void> {
+/**
+ * Shared JXA snippet: read an observable state signature from an AX element.
+ * Used by clickElement/clickMenuBarExtra to verify whether AXPress actually
+ * changed anything (Tauri/Electron silently swallow AXPress without throwing).
+ * Returns a string concatenation of value/focused/selected (each defensively
+ * read; missing attributes contribute ''). An empty signature means the element
+ * exposes no observable state — verification is inconclusive.
+ */
+const JXA_STATE_SIGNATURE = `
+  function stateSignature(elem) {
+    var parts = [];
+    try { var v = elem.value(); parts.push('v=' + (v === undefined || v === null ? '' : String(v))); } catch(e) { parts.push('v='); }
+    try { parts.push('f=' + (elem.focused ? (elem.focused() ? 1 : 0) : '')); } catch(e) { parts.push('f='); }
+    try { parts.push('s=' + (elem.selected ? (elem.selected() ? 1 : 0) : '')); } catch(e) { parts.push('s='); }
+    return parts.join('|');
+  }
+  // Brief synchronous spin to let an async AXPress propagate state.
+  function spinMs(ms) { var t = Date.now(); while (Date.now() - t < ms) {} }
+`;
+
+/**
+ * Shared JXA snippet: perform a coordinate click at the element's bounds center.
+ * Returns the {x, y} used, or null if bounds could not be read.
+ */
+const JXA_COORDINATE_CLICK = `
+  function coordinateClick(elem) {
+    var pos = elem.position();
+    var sz = elem.size();
+    var cx = pos[0] + sz[0] / 2;
+    var cy = pos[1] + sz[1] / 2;
+    ObjC.import('CoreGraphics');
+    var src = $.CGEventSourceCreate($.kCGEventSourceStateHIDSystemState);
+    var pt = $.CGPointMake(cx, cy);
+    var down = $.CGEventCreateMouseEvent(src, $.kCGEventLeftMouseDown, pt, $.kCGMouseButtonLeft);
+    $.CGEventPost($.kCGHIDEventTap, down);
+    var up = $.CGEventCreateMouseEvent(src, $.kCGEventLeftMouseUp, pt, $.kCGMouseButtonLeft);
+    $.CGEventPost($.kCGHIDEventTap, up);
+    return {x: cx, y: cy};
+  }
+`;
+
+export async function clickElement(this: MacOSPlatform, elementId: string, app?: string): Promise<ClickResult> {
   const elementIdLiteral = JSON.stringify(elementId);
   const effectiveApp = app || this.activeTarget?.appName;
   const appLiteral = JSON.stringify(effectiveApp || "");
   const cachedDescriptor = prepareCache.call(this, elementId);
   const cachedJson = JSON.stringify(cachedDescriptor);
+  const preferCoord = preferCoordinateClick(effectiveApp);
 
   const jxaScript = `
     var se = Application('System Events');
     var _result = null;
     ${jxaElementActionHelpers()}
+    ${JXA_STATE_SIGNATURE}
+    ${JXA_COORDINATE_CLICK}
     var elemPath = ${elementIdLiteral};
     var appName = ${appLiteral};
     // 容忍大小写/空格/连字符/下划线变体（cc-switch vs CC Switch vs cc_switch）
     var _norm = function(s) { return String(s||'').toLowerCase().split(' ').join('').split('-').join('').split('_').join(''); };
     var appNorm = _norm(appName);
     var cached = ${cachedJson};
+    var preferCoord = ${preferCoord ? "true" : "false"};
 
     var elem = resolveElementInApp(elemPath, appName) || resolveElementByFullPath(elemPath);
     if (elem && !descriptorMatches(elem)) {
@@ -41,26 +102,50 @@ export async function clickElement(this: MacOSPlatform, elementId: string, app?:
 
     if (!elem) {
       _result = {success: false, error: "Element not found: " + elemPath};
+    } else if (preferCoord) {
+      // 启发式命中（Tauri 等已知静默吞 AXPress 的应用）：直接坐标点击
+      try {
+        coordinateClick(elem);
+        _result = {success: true, method: "coordinate", verified: false};
+      } catch(e) {
+        _result = {success: false, error: "Could not click element (coordinate): " + String(e.message || e)};
+      }
     } else {
+      // AXPress + verify：采样前后状态签名，无变化则降级坐标
+      var sigBefore = stateSignature(elem);
+      var axpressThrew = false;
       try {
         elem.actions.AXPress.perform();
-        _result = {success: true};
       } catch(e) {
+        axpressThrew = true;
+      }
+      if (axpressThrew) {
+        // AXPress 抛异常 → 坐标 fallback
         try {
-          var pos = elem.position();
-          var sz = elem.size();
-          var cx = pos[0] + sz[0] / 2;
-          var cy = pos[1] + sz[1] / 2;
-          ObjC.import('CoreGraphics');
-          var src = $.CGEventSourceCreate($.kCGEventSourceStateHIDSystemState);
-          var pt = $.CGPointMake(cx, cy);
-          var down = $.CGEventCreateMouseEvent(src, $.kCGEventLeftMouseDown, pt, $.kCGMouseButtonLeft);
-          $.CGEventPost($.kCGHIDEventTap, down);
-          var up = $.CGEventCreateMouseEvent(src, $.kCGEventLeftMouseUp, pt, $.kCGMouseButtonLeft);
-          $.CGEventPost($.kCGHIDEventTap, up);
-          _result = {success: true};
+          coordinateClick(elem);
+          _result = {success: true, method: "coordinate", verified: false};
         } catch(e2) {
           _result = {success: false, error: "Could not click element: " + String(e2.message || e2)};
+        }
+      } else {
+        // AXPress 未抛异常：spin 等待异步生效，再采样签名判断是否真的生效
+        spinMs(80);
+        var sigAfter = stateSignature(elem);
+        if (sigBefore !== '' && sigAfter !== sigBefore) {
+          // 状态变化 → AXPress 生效
+          _result = {success: true, method: "axpress", verified: true};
+        } else if (sigBefore === '' && sigAfter === '') {
+          // 无可观测状态（纯按钮无 value/focused/selected）：无法 verify，
+          // 保守认为 AXPress 可能成功（不降级坐标，避免对正常按钮误伤）
+          _result = {success: true, method: "axpress", verified: false};
+        } else {
+          // 有可观测状态但无变化 → 静默吞，降级坐标
+          try {
+            coordinateClick(elem);
+            _result = {success: true, method: "coordinate", verified: false};
+          } catch(e3) {
+            _result = {success: false, error: "Could not click element (coordinate fallback): " + String(e3.message || e3)};
+          }
         }
       }
     }
@@ -79,8 +164,13 @@ export async function clickElement(this: MacOSPlatform, elementId: string, app?:
         ? new Error(result.error)
         : new ElementNotFoundError(elementId);
     }
+    return {
+      method: (result.method as "axpress" | "coordinate") ?? "axpress",
+      verified: Boolean(result.verified),
+    };
   } catch (error) {
     rethrowElementActionError(error, "click_element", elementId);
+    return { method: "axpress", verified: false }; // unreachable — rethrow throws
   }
 }
 
@@ -394,7 +484,7 @@ export function matchMenuBarExtra(items: MenuBarExtraItem[], selector: MenuBarEx
   return filtered[0];
 }
 
-export async function clickMenuBarExtra(this: MacOSPlatform, app: string, selector: MenuBarExtraSelector = {}): Promise<void> {
+export async function clickMenuBarExtra(this: MacOSPlatform, app: string, selector: MenuBarExtraSelector = {}): Promise<ClickResult> {
   const items = await this.findMenuBarExtra(app);
   const target = matchMenuBarExtra(items, selector);
   if (!target) {
@@ -406,7 +496,8 @@ export async function clickMenuBarExtra(this: MacOSPlatform, app: string, select
   const host = target.host;
   const tgtNameLiteral = JSON.stringify(target.name || "");
   const tgtDescLiteral = JSON.stringify(target.description || "");
-  // AXPress，失败则坐标点击中心（与 clickElement 同模式，应对 Tauri 等静默吞）
+  const preferCoord = preferCoordinateClick(app);
+  // AXPress + verify-then-fallback（与 clickElement 同模式，应对 Tauri 等静默吞）。
   // host==="systemuiserver" 时在 SystemUIServer 进程上重定位（托盘 status item 由它托管），
   // SystemUIServer.menuBarItems 顺序不稳定，用保存的 name/description 二次匹配定位具体 item。
   // host==="self" 时按 app 进程的 menuBars()[mb].menuBarItems()[idx] 重定位（稳定）。
@@ -445,11 +536,14 @@ export async function clickMenuBarExtra(this: MacOSPlatform, app: string, select
     var appName = ${appLiteral};
     var tgtName = ${tgtNameLiteral};
     var tgtDesc = ${tgtDescLiteral};
+    ${JXA_STATE_SIGNATURE}
+    ${JXA_COORDINATE_CLICK}
     // 容忍大小写/空格/连字符/下划线变体（cc-switch vs CC Switch vs cc_switch）
     var _norm = function(s) { return String(s||'').toLowerCase().split(' ').join('').split('-').join('').split('_').join(''); };
     var appNorm = _norm(appName);
     var tgtNameNorm = _norm(tgtName);
     var tgtDescNorm = _norm(tgtDesc);
+    var preferCoord = ${preferCoord ? "true" : "false"};
     var _matchApp = function(itemNorm) {
       if (!itemNorm) return false;
       return itemNorm === appNorm || itemNorm.indexOf(appNorm) !== -1 || appNorm.indexOf(itemNorm) !== -1;
@@ -464,21 +558,36 @@ export async function clickMenuBarExtra(this: MacOSPlatform, app: string, select
       }
       ${resolveItemBlock}
       if (!_result && item) {
-        try {
-          item.actions.AXPress.perform();
-          _result = {success: true, method: "axpress"};
-        } catch(e) {
-          var pos = item.position();
-          var sz = item.size();
-          var cx = pos[0] + sz[0] / 2;
-          var cy = pos[1] + sz[1] / 2;
-          ObjC.import('CoreGraphics');
-          var pt = $.CGPointMake(cx, cy);
-          var down = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseDown, pt, $.kCGMouseButtonLeft);
-          $.CGEventPost($.kCGHIDEventTap, down);
-          var up = $.CGEventCreateMouseEvent(null, $.kCGEventLeftMouseUp, pt, $.kCGMouseButtonLeft);
-          $.CGEventPost($.kCGHIDEventTap, up);
-          _result = {success: true, method: "coordinate", x: cx, y: cy};
+        if (preferCoord) {
+          // 启发式命中：直接坐标点击
+          coordinateClick(item);
+          _result = {success: true, method: "coordinate", verified: false};
+        } else {
+          // AXPress + verify
+          var sigBefore = stateSignature(item);
+          var axpressThrew = false;
+          try {
+            item.actions.AXPress.perform();
+          } catch(e) {
+            axpressThrew = true;
+          }
+          if (axpressThrew) {
+            coordinateClick(item);
+            _result = {success: true, method: "coordinate", verified: false};
+          } else {
+            spinMs(80);
+            var sigAfter = stateSignature(item);
+            if (sigBefore !== '' && sigAfter !== sigBefore) {
+              _result = {success: true, method: "axpress", verified: true};
+            } else if (sigBefore === '' && sigAfter === '') {
+              // 托盘 status item 通常无可观测状态（无 value/selected）；AXPress 开菜单的效果
+              // 难以从 item 本身验证。保守认为成功（菜单是否打开由后续 find_element 判断）。
+              _result = {success: true, method: "axpress", verified: false};
+            } else {
+              coordinateClick(item);
+              _result = {success: true, method: "coordinate", verified: false};
+            }
+          }
         }
       }
     } catch(e) {
@@ -491,10 +600,14 @@ export async function clickMenuBarExtra(this: MacOSPlatform, app: string, select
     out = execFileSync("osascript", ["-l", "JavaScript", "-e", jxaScript], { encoding: "utf-8", timeout: 15000 }).trim();
   } catch (error) {
     rethrowElementActionError(error, "click_menu_bar_extra", app);
-    return; // unreachable
+    return { method: "axpress", verified: false }; // unreachable — rethrow throws
   }
   const result = JSON.parse(out);
   if (!result.success) {
     throw new Error(`click_menu_bar_extra failed in ${app}: ${result.error}`);
   }
+  return {
+    method: (result.method as "axpress" | "coordinate") ?? "axpress",
+    verified: Boolean(result.verified),
+  };
 }

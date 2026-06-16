@@ -69,7 +69,7 @@ function defaults() {
   mockPlat.key.mockResolvedValue(undefined);
   mockPlat.ocr.mockResolvedValue({ elements: [], fullText: "" });
   mockPlat.findElement.mockResolvedValue({ results: [{ id: "N/w0/1", role: "AXButton", name: "Save" }], metrics: { scannedCount: 1, matchedCount: 1, durationMs: 5, truncated: false } });
-  mockPlat.clickElement.mockResolvedValue(undefined);
+  mockPlat.clickElement.mockResolvedValue({ method: "axpress", verified: true });
   mockPlat.typeInElement.mockResolvedValue(undefined);
   mockPlat.setElementValue.mockResolvedValue(undefined);
   mockPlat.listApps.mockResolvedValue([{ name: "Notes", pid: 1, isFrontmost: true, windowCount: 1 }]);
@@ -269,6 +269,31 @@ describe("active target context", () => {
     await vi.advanceTimersByTimeAsync(101);
     await tools.get("click_element")!.handler({ elementId: "btn1" });
     expect(mockPlat.clickElement).toHaveBeenCalledWith("btn1", "Notes");
+  });
+
+  it("surfaces method/verified from clickElement in the receipt", async () => {
+    const r = await tools.get("click_element")!.handler({ elementId: "btn1", app: "Notes" });
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.result).toMatchObject({ clicked: true, method: "axpress", verified: true });
+    expect(d.warnings).toEqual([]); // verified:true → no warning
+  });
+
+  it("adds a warning when clickElement falls back to coordinate (verified:false)", async () => {
+    mockPlat.clickElement.mockResolvedValueOnce({ method: "coordinate", verified: false });
+    const r = await tools.get("click_element")!.handler({ elementId: "btn1", app: "Notes" });
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.result).toMatchObject({ clicked: true, method: "coordinate", verified: false });
+    expect(d.warnings.length).toBeGreaterThan(0);
+    expect(d.warnings[0]).toMatch(/coordinate fallback/i);
+  });
+
+  it("adds a warning when AXPress is unverifiable (method:axpress, verified:false)", async () => {
+    mockPlat.clickElement.mockResolvedValueOnce({ method: "axpress", verified: false });
+    const r = await tools.get("click_element")!.handler({ elementId: "btn1", app: "Notes" });
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.result).toMatchObject({ method: "axpress", verified: false });
+    expect(d.warnings.length).toBeGreaterThan(0);
+    expect(d.warnings[0]).toMatch(/no observable state/i);
   });
 
   it("uses active target app when app is omitted in set_value", async () => {

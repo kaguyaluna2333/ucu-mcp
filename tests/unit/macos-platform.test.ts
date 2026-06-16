@@ -1463,4 +1463,62 @@ describe("MacOSPlatform menu bar extras (tray)", () => {
     expect(script).toContain("menuBars()[0]");
     expect(script).not.toContain("byName(\"SystemUIServer\")");
   });
+
+  // ── 方向4b：AXPress verify-then-fallback ────────────────────────────────
+  it("clickElement JXA includes state-signature verify + coordinate fallback", async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === "osascript") return JSON.stringify({ success: true, method: "axpress", verified: true });
+      return "";
+    });
+    const platform = new MacOSPlatform();
+    await platform.clickElement("Safari/w0/1", "Safari").catch(() => {});
+    const script = lastJxaScript();
+    // verify 原语必须存在
+    expect(script).toContain("stateSignature");
+    expect(script).toContain("spinMs");
+    expect(script).toContain("coordinateClick");
+    expect(script).toContain("sigBefore");
+    expect(script).toContain("sigAfter");
+    expect(script).toContain("preferCoord");
+  });
+
+  it("clickElement returns ClickResult with method/verified from JXA", async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === "osascript") return JSON.stringify({ success: true, method: "coordinate", verified: false });
+      return "";
+    });
+    const platform = new MacOSPlatform();
+    const result = await platform.clickElement("Safari/w0/1", "Safari");
+    expect(result).toEqual({ method: "coordinate", verified: false });
+  });
+
+  it("clickMenuBarExtra JXA also uses verify-then-fallback (not pure exception)", async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === "osascript") {
+        return JSON.stringify({ items: [
+          { menuBar: 0, index: 1, name: "CC Switch", description: "", x: 44, y: 0, width: 87, height: 33, host: "self" },
+        ] });
+      }
+      return "";
+    });
+    const platform = new MacOSPlatform();
+    await platform.clickMenuBarExtra("cc-switch", { name: "switch" }).catch(() => {});
+    const script = lastJxaScript();
+    // click_menu_bar_extra 也应含 verify 原语（与 clickElement 同模式）
+    expect(script).toContain("stateSignature");
+    expect(script).toContain("sigBefore");
+    expect(script).toContain("spinMs");
+  });
+
+  it("clickElement skips AXPress for known silent-swallow apps (Tauri heuristic)", async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === "osascript") return JSON.stringify({ success: true, method: "coordinate", verified: false });
+      return "";
+    });
+    const platform = new MacOSPlatform();
+    await platform.clickElement("MyTauri/w0/1", "MyTauri App").catch(() => {});
+    const script = lastJxaScript();
+    // Tauri 启发式命中 → preferCoord=true，直接坐标点击跳过 AXPress+verify
+    expect(script).toContain("var preferCoord = true");
+  });
 });

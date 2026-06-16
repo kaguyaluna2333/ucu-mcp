@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-06-16
+
+方向4b AXPress verify-then-fallback + 方向5 FocusStealSuppression @deprecated 文档化。
+
+### Added
+
+- **方向4b AXPress verify-then-fallback（clickElement + clickMenuBarExtra）**：解决 Tauri/Electron 控件静默吞 AXPress（不抛异常也不执行）。双层策略：(1) 启发式跳过——对已知静默吞的应用（`AX_SILENT_APP_HINTS = ["tauri"]`，按 appName includes 匹配）直接坐标点击，跳过 AXPress；(2) verify 状态签名——对走 AXPress 的应用，采样前后 `value|focused|selected` 签名，spin 80ms 等异步生效，无变化则降级坐标。`ClickResult { method: "axpress"|"coordinate"; verified: boolean }` 透到 ActionReceipt.result，verified:false 时附 warning 引导模型用 screenshot/get_window_state 复核。无可观测状态的元素（纯按钮）保守判 verified:false 但不降级坐标（避免误伤）。共享 JXA 原语 `stateSignature`/`coordinateClick`/`spinMs`。
+- 返回类型波及链：`clickElement`/`clickMenuBarExtra` `Promise<void>` → `Promise<ClickResult>`（base.ts 接口 + windows/linux stub + element.ts consumer + tools-layer mock）。
+
+### Changed
+
+- **方向5 FocusStealSuppression @deprecated 文档化**：`focus.ts` 的 `saveFocus`/`restoreFocus` 加 `@deprecated` JSDoc，说明 CGEvent 在 HID 层工作不需前台 focus、焦点管理被有意禁用、`tools-layer.test.ts` 的 `not.toHaveBeenCalled()` 锁定禁用态。不删不接线（文档化设计决策，非遗漏）。`base.ts` 接口注释同步。
+
+### Fixed
+
+- 无行为修复（4b/5 是 v0.5.0 的质量强化）。
+
+### 真机验证（2026-06-16）
+
+- ✅ doctor 全绿（3 native helpers + 权限 + 26 工具）。
+- ✅ OCR（方向1）返回非空 elements，无 NSNull 崩溃。
+- ✅ press_key 字母键 Cmd+M（方向2）成功合成，不报 Unknown key。
+- ✅ describe_screen（方向3）结构正确，AX 失败时聚合到 errors[] 不抛出。
+- ✅ focus_app(cc-switch)（方向4a）建立 tray target（windowId:"tray"），不抛 WINDOW_NOT_FOUND。
+- ✅ click_menu_bar_extra（方向4b）返回 `method:"axpress", verified:true`——托盘菜单真实打开（OCR 确认 "About/Hide/Quit CC Switch" 菜单项可见）。
+- ⚠️ 发现：cc-switch 托盘菜单是其**原生应用菜单**（About/Hide/Quit），"使用统计"在 WebView 设置面板内，不在托盘菜单。完整 "设置→使用统计" 流程需先打开设置窗口（非托盘菜单可达），留 follow-up。
+
+### Tests
+
+- 303→310（+7：clickElement ClickResult 解析、JXA stateSignature/spinMs/coordinateClick/sigBefore/sigAfter/preferCoord source 断言、Tauri 启发式 preferCoord=true、tools-layer method/verified 透出 + warnings）。
+
 ## [0.5.0] - 2026-06-15
 
 cc-switch 操控诊断与视觉通道修复：打通 OCR + 字母快捷键 + 托盘 + 视觉降级 fallback + 内置 agent skill。
