@@ -38,7 +38,12 @@ export function rethrowInputError(error: unknown, operation: string): never {
 }
 
 export function normalizeAppName(name: string): string {
-  return name.trim().toLowerCase();
+  // Drop all non-alphanumeric chars so app name variants match across
+  // formattings: "CC Switch" / "cc-switch" / "cc_switch" / "CC.Switch"
+  // all collapse to "ccswitch". This is what users (and LLMs) typically
+  // produce from casual memory, and it's the only way focus_app can
+  // resolve tray vs. windowed app identity reliably.
+  return name.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 export function appNameMatches(processName: string, requestedApp: string): boolean {
