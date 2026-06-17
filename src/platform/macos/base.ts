@@ -3,7 +3,7 @@ import { TargetStaleError } from "../../util/errors.js";
 import type { CachedElementDescriptor, MacOSPlatformOptions } from "./helpers.js";
 import { saveFocus, restoreFocus } from "./focus.js";
 import { screenshot, screenshotWindow, getScreenSize, isScreenLocked, ocr } from "./screen.js";
-import { listApps, focusApp, getActiveBrowserContext, listWindows } from "./window.js";
+import { listApps, focusApp, getActiveBrowserContext, listWindows, keepTargetAxAlive } from "./window.js";
 import { getWindowState, findElement } from "./ax-tree.js";
 import { click, move, drag, scroll, getCursorPosition, type as typeMethod, key } from "./input.js";
 import { clickElement, typeInElement, setElementValue, findMenuBarExtra, clickMenuBarExtra } from "./element.js";
@@ -92,6 +92,7 @@ export class MacOSPlatform implements Platform {
   listApps = listApps;
   focusApp = focusApp;
   getActiveBrowserContext = getActiveBrowserContext;
+  keepTargetAxAlive = keepTargetAxAlive;
   listWindows = listWindows;
 
   getWindowState = getWindowState;

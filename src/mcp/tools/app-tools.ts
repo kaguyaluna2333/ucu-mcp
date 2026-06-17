@@ -127,16 +127,19 @@ export function registerAppTools(registerTool: RegisterToolFn): void {
     let nativeHelpers:
       | { cgevent: { ok: boolean; path: string | null; tried: readonly string[] };
           ocr: { ok: boolean; path: string | null; tried: readonly string[] };
-          windowlist: { ok: boolean; path: string | null; tried: readonly string[] } }
+          windowlist: { ok: boolean; path: string | null; tried: readonly string[] };
+          skylight: { ok: boolean; path: string | null; tried: readonly string[] } }
       | undefined;
     if (process.platform === "darwin") {
       const cgevent = resolveHelperPath(["native", "cgevent", "cgevent-helper"]);
       const ocr = resolveHelperPath(["native", "ocr", "ocr-helper"]);
       const windowlist = resolveHelperPath(["native", "windowlist", "windowlist-helper"]);
+      const skylight = resolveHelperPath(["native", "skylight", "skylight-helper"]);
       nativeHelpers = {
         cgevent: { ok: cgevent.path !== null, path: cgevent.path, tried: cgevent.tried },
         ocr: { ok: ocr.path !== null, path: ocr.path, tried: ocr.tried },
         windowlist: { ok: windowlist.path !== null, path: windowlist.path, tried: windowlist.tried },
+        skylight: { ok: skylight.path !== null, path: skylight.path, tried: skylight.tried },
       };
     }
 
@@ -164,6 +167,11 @@ export function registerAppTools(registerTool: RegisterToolFn): void {
       if (!nativeHelpers.windowlist.ok) {
         readiness = readiness === "ready" ? "degraded" : readiness;
         issues.push("Native windowlist helper not found (window enumeration will fall back to slow JXA). Run `npm run build` to compile it.");
+      }
+      if (!nativeHelpers.skylight.ok) {
+        // skylight missing → per-process posting unavailable; input falls back to
+        // HID-tap (moves cursor). Note as info, not degraded, since HID-tap still works.
+        issues.push("Native skylight helper not found (per-process event posting unavailable — clicks/typing will move the cursor via HID-tap). Run `npm run build` to compile it.");
       }
     }
 

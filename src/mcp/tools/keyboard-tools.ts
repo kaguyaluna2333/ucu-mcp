@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { DispatchMethod } from "../../platform/base.js";
 import { UnsupportedParameterError } from "../../util/errors.js";
 import {
   type RegisterToolFn,
@@ -9,6 +10,10 @@ import {
   captureAfterFields,
 } from "./helpers.js";
 
+function keyDispatchWarnings(dispatch: DispatchMethod | undefined): string[] {
+  return dispatch === "hid-tap" ? ["Key event dispatched via global HID tap (no target pid available; may affect foreground). Use focus_app first to enable per-process posting."] : [];
+}
+
 export function registerKeyboardTools(registerTool: RegisterToolFn): void {
   registerTool("type_text", "Type text at the current cursor position", {
     text: z.string().describe("Text to type"), delay: z.number().optional().describe("Delay between keystrokes in ms"),
@@ -17,8 +22,8 @@ export function registerKeyboardTools(registerTool: RegisterToolFn): void {
   }, async (params) => {
     if (params.windowId) throw new UnsupportedParameterError("windowId-targeted keyboard typing is not implemented");
     const safetyCtx = await getSafetyContext();
-    await withSafety<void>({ action: "type_text", params: { text: params.text, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().type(params.text, params.delay) });
-    return actionResponse("type_text", { typed: true, charCount: params.text.length }, {}, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    const dispatch = await withSafety<DispatchMethod | undefined>({ action: "type_text", params: { text: params.text, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().type(params.text, params.delay) });
+    return actionResponse("type_text", { typed: true, charCount: params.text.length, dispatch: dispatch ?? "hid-tap" }, {}, params.captureAfter, params.captureFormat, params.captureMaxWidth, keyDispatchWarnings(dispatch));
   });
 
   registerTool("press_key", "Press a keyboard shortcut", {
@@ -35,7 +40,7 @@ export function registerKeyboardTools(registerTool: RegisterToolFn): void {
     ];
     if (keys.length === 0) throw new UnsupportedParameterError("press_key requires at least one key");
     const safetyCtx = await getSafetyContext();
-    await withSafety<void>({ action: "press_key", params: { keys, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().key(keys) });
-    return actionResponse("press_key", { pressed: true, keys }, {}, params.captureAfter, params.captureFormat, params.captureMaxWidth);
+    const dispatch = await withSafety<DispatchMethod | undefined>({ action: "press_key", params: { keys, ...safetyCtx }, requiresAccessibility: true, execute: () => getPlatform().key(keys) });
+    return actionResponse("press_key", { pressed: true, keys, dispatch: dispatch ?? "hid-tap" }, {}, params.captureAfter, params.captureFormat, params.captureMaxWidth, keyDispatchWarnings(dispatch));
   });
 }

@@ -318,6 +318,8 @@ export interface MenuBarExtraItem {
   height: number;
   /** Which process hosts this status item. "self" = app's own menu bar; "systemuiserver" = third-party tray hosted by SystemUIServer. */
   host: "self" | "systemuiserver";
+  /** The hosting process pid — app's own pid for host:"self", SystemUIServer's pid for host:"systemuiserver". Enables per-process event posting. */
+  pid: number;
 }
 
 export interface MenuBarExtraSelector {
@@ -345,7 +347,7 @@ export async function findMenuBarExtra(this: MacOSPlatform, app: string): Promis
       return itemNorm === appNorm || itemNorm.indexOf(appNorm) !== -1 || appNorm.indexOf(itemNorm) !== -1;
     };
 
-    var _readItem = function(item, mb, i, host) {
+    var _readItem = function(item, mb, i, host, hostPid) {
       var desc = '', nm = '';
       try { desc = item.description(); } catch(e) {}
       try { nm = item.name(); } catch(e) {}
@@ -353,7 +355,7 @@ export async function findMenuBarExtra(this: MacOSPlatform, app: string): Promis
       try { pos = item.position(); } catch(e) {}
       try { sz = item.size(); } catch(e) {}
       if (sz[0] === 0 && sz[1] === 0) return null;
-      return {menuBar: mb, index: i, name: nm, description: desc, x: pos[0], y: pos[1], width: sz[0], height: sz[1], host: host};
+      return {menuBar: mb, index: i, name: nm, description: desc, x: pos[0], y: pos[1], width: sz[0], height: sz[1], host: host, pid: hostPid || 0};
     };
 
     try {
@@ -367,7 +369,9 @@ export async function findMenuBarExtra(this: MacOSPlatform, app: string): Promis
 
       var items = [];
 
-      // 阶段 1：app 自身 menuBarItems（host:"self"）
+      // 阶段 1：app 自身 menuBarItems（host:"self"，用 app 自身 pid）
+      var appPid = 0;
+      if (p) { try { appPid = p.unixId(); } catch(e) {} }
       if (p) {
         try {
           var menuBars = p.menuBars();
@@ -375,7 +379,7 @@ export async function findMenuBarExtra(this: MacOSPlatform, app: string): Promis
             var mbItems;
             try { mbItems = menuBars[mb].menuBarItems(); } catch(e) { continue; }
             for (var i = 0; i < mbItems.length; i++) {
-              var rec = _readItem(mbItems[i], mb, i, "self");
+              var rec = _readItem(mbItems[i], mb, i, "self", appPid);
               if (rec) items.push(rec);
             }
           }
@@ -393,6 +397,8 @@ export async function findMenuBarExtra(this: MacOSPlatform, app: string): Promis
       if (!hasNonApple) {
         try {
           var suiProcs = se.processes.byName("SystemUIServer");
+          var suiPid = 0;
+          if (suiProcs) { try { suiPid = suiProcs.unixId(); } catch(e) {} }
           if (suiProcs) {
             var suiBars = suiProcs.menuBars();
             for (var smb = 0; smb < suiBars.length; smb++) {
@@ -405,7 +411,7 @@ export async function findMenuBarExtra(this: MacOSPlatform, app: string): Promis
                 try { sNm = sItem.name(); } catch(e) {}
                 // 按 description/name 匹配目标 app（status item 的 description 通常是 app 名）
                 if (_matchApp(_norm(sDesc)) || _matchApp(_norm(sNm))) {
-                  var sRec = _readItem(sItem, smb, si, "systemuiserver");
+                  var sRec = _readItem(sItem, smb, si, "systemuiserver", suiPid);
                   if (sRec) {
                     // 保留匹配信号，供 click 二次定位
                     sRec.name = sNm; sRec.description = sDesc;

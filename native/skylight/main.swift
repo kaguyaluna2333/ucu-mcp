@@ -189,6 +189,53 @@ func focusWithoutRaise(pid: Int32, windowID: Int) {
     _ = targetPSN.withUnsafeBytes { psnRaw in buf.withUnsafeBufferPointer { bp in postRec(psnRaw.baseAddress!, bp.baseAddress!) } }
 }
 
+// MARK: - AX keepalive (root-cause fix for Electron/Tauri AXPress silent failure)
+
+/// Keep the target app's AX tree alive when occluded/background. Best-effort —
+/// no error if SPIs are absent (older macOS). Writes AXManualAccessibility and
+/// AXEnhancedUserInterface hints and subscribes a remote-aware observer via the
+/// private _AXObserverAddNotificationAndCheckRemote (falls back to public API).
+func doKeepAlive(_ p: Input) -> String {
+    guard let pid = p.pid, pid > 0 else { return "{\"error\":\"no pid\"}" }
+    let app = AXUIElementCreateApplication(pid)
+    // Attribute hints: tell the app to expose its full AX tree even when occluded.
+    AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue!)
+    AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue!)
+
+    // Create an observer. AXObserverCreate is public; we keep a no-op callback
+    // since we only need the subscription to hold the tree live, not act on events.
+    let cb: @convention(c) (AXObserver, AXUIElement, CFString, UnsafeMutableRawPointer?) -> Void = { _, _, _, _ in }
+    var observerOpt: AXObserver?
+    let createStatus = AXObserverCreate(pid, cb, &observerOpt)
+    guard createStatus == .success, let observer = observerOpt else {
+        return "{\"ok\":true,\"method\":\"ax-keepalive\",\"remote\":false,\"reason\":\"observer-create-failed\"}"
+    }
+
+    let notifications = [
+        kAXFocusedUIElementChangedNotification, kAXFocusedWindowChangedNotification,
+        kAXApplicationActivatedNotification, kAXMainWindowChangedNotification,
+        kAXWindowCreatedNotification, kAXCreatedNotification,
+        kAXTitleChangedNotification, kAXLayoutChangedNotification,
+    ] as [CFString]
+
+    // Prefer the private remote-aware SPI; fall back to the public API.
+    // Both have signature: AXError f(AXObserver, AXUIElement, CFString, void*)
+    typealias AddNotifFn = @convention(c) (AXObserver, AXUIElement, CFString, UnsafeMutableRawPointer?) -> AXError
+    let remoteFn = sym("AXObserverAddNotificationAndCheckRemote", as: AddNotifFn.self)
+    var usedRemote = false
+    for n in notifications {
+        if let fn = remoteFn {
+            _ = fn(observer, app, n, nil)
+            usedRemote = true
+        } else {
+            _ = AXObserverAddNotification(observer, app, n, nil)
+        }
+    }
+    // Add the observer to the current run loop so subscriptions stay active.
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
+    return "{\"ok\":true,\"method\":\"ax-keepalive\",\"remote\":\(usedRemote)}"
+}
+
 // MARK: - Commands
 
 func doClick(_ p: Input) -> String {
@@ -367,6 +414,7 @@ case "drag": out(doDrag(input))
 case "scroll": out(doScroll(input))
 case "pressKey": out(doPressKey(input))
 case "typeBatch": out(doTypeBatch(input))
+case "keepAlive": out(doKeepAlive(input))
 case "ping": out(skylightMouseAvailable ? "{\"ok\":true,\"skylight\":true}" : "{\"ok\":true,\"skylight\":false}")
 default: out("{\"error\":\"unknown\"}")
 }

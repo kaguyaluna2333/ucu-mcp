@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-06-17
+
+对标 Codex 原生 computer use：输入注入走 per-process 路径，不移动全局光标、不抢前台。仅 Mac 端（与 Codex mac 版一致，Win 版只前台）。
+
+### Added — 核心后台能力
+
+- **skylight-helper（native/skylight/main.swift）**：第 4 个 Swift native helper。dlopen SkyLight.framework，`SLEventPostToPid`（私有 SPI）按 PID 投递鼠标事件——绕开全局 HID 流，光标不动。完整 cua-driver 配方：NSEvent bridge 构建（绕开 Chromium renderer 过滤）+ field 40 pid latch + `CGEventSetWindowLocation` + focus-without-raise（`SLPSPostEventRecordTo` 248-byte event record，不调 `SLPSSetFrontProcessWithOptions`）+ (-1,-1) primer 欺骗 Chromium user-activation gate。键盘走公开 `CGEventPostToPid`。frontmost/canvas app 自动 fallback HID-tap。
+- **pid/windowNumber 透传链**：`WindowInfo`/`AppTarget` 加 `windowNumber`（真实 CGWindowID，window.ts 原本丢弃了）。`macos/input.ts` 读 `activeTarget` 透传到 `utils/input.ts`。`utils/input.ts` 函数加 `target` 参数，pid>0 走 skylight-helper，否则 fallback cgevent-helper（HID-tap）。
+- **AX 保活（方向4b 根因修复）**：skylight-helper 的 `keepAlive` 命令写 `AXManualAccessibility`/`AXEnhancedUserInterface` + 订阅 remote-aware AX observer（`_AXObserverAddNotificationAndCheckRemote`，符号缺失时 fallback 公开 API）。focusApp 成功后调用，保活目标 AX 树（被遮挡的 Electron/Tauri 不再冻结 → AXPress 不再静默失败）。
+- **tray per-process**：`MenuBarExtraItem` 加 `pid` 字段，findMenuBarExtra 捕获 SystemUIServer pid。focusApp 建 tray target 时用真实 host pid（非 0），tray 坐标点击也走 per-process。
+- **dispatch 信号透出**：所有输入工具返回 `result.dispatch`（`"per-pid" | "hid-tap"`）。hid-tap 时附 warning。doctor 检测 skylight-helper 可用性。
+- **DispatchMethod 类型**（base.ts）：Platform 接口 mouse/keyboard 方法返回 `Promise<DispatchMethod | void>`。
+
+### Changed
+
+- **element.ts 坐标 fallback 迁移**：`JXA_COORDINATE_CLICK`（JXA HID-tap）重命名为 `JXA_BOUNDS_CENTER`（只算中心坐标）。clickElement/clickMenuBarExtra 的坐标点击退出 JXA，改在 TS 层调 `this.click()`（走 per-process）。
+- SKILL.md：加 "Dispatch method (v0.6.0+)" 节 + Operating Rules 加 "focus_app before input"。
+
+### 真机验证（2026-06-17）
+
+- ✅ skylight-helper ping 返回 `{"ok":true,"skylight":true}`（SPI 全加载）。
+- ✅ 对后台 Finder pid click(100,100) 返回 `method:per-pid`，光标不跳到 (100,100)（HID-tap 会直接跳过去）——核心承诺验证。
+- ✅ keepAlive 对 Finder pid 返回 `method:ax-keepalive`。
+- ✅ 310 tests passed（4 native helpers 全编译）。
+
+### 已知限制
+
+- Canvas/GPU app（Blender/Unity/游戏）的 event loop 只接受 HID-tap → 自动 fallback，返回 `dispatch:"hid-tap"` + warning。
+- `_AXObserverAddNotificationAndCheckRemote` 符号在本机未通过 dlsym 解析（remote:false），但 AXManualAccessibility/AXEnhancedUserInterface 属性写入生效（覆盖非 Chromium 场景）。
+
 ## [0.5.2] - 2026-06-17
 
 Agent Skill 重写为 CLI agent 优先（Claude Code / Codex / OpenCode 都是 stdio CLI 环境）。

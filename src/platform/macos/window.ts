@@ -63,14 +63,20 @@ export async function focusApp(this: MacOSPlatform, app: string): Promise<AppTar
     try {
       const extras = await this.findMenuBarExtra(app);
       if (extras.length > 0) {
+        // Use the hosting process pid (SystemUIServer or app itself) so per-process
+        // event posting works for tray clicks (no global cursor move).
+        const trayPid = extras[0]?.pid || 0;
         this.activeTarget = {
           targetId: randomUUID(),
           appName: app,
-          pid: 0,
+          pid: trayPid,
           windowId: "tray",
           title: "",
           capturedAt: new Date().toISOString(),
         };
+        if (trayPid > 0) {
+          this.keepTargetAxAlive(trayPid).catch(() => { /* non-fatal */ });
+        }
         return this.activeTarget;
       }
     } catch {
@@ -97,7 +103,25 @@ export async function focusApp(this: MacOSPlatform, app: string): Promise<AppTar
     capturedAt: new Date().toISOString(),
     windowNumber: target.windowNumber,
   };
+  // AX keepalive: keep the target's accessibility tree live when occluded/background,
+  // so AXPress on Electron/Tauri controls doesn't silently no-op. Best-effort.
+  this.keepTargetAxAlive(target.pid).catch(() => { /* non-fatal */ });
   return this.activeTarget;
+}
+
+/** Call the skylight-helper keepAlive command for a pid (best-effort, non-throwing). */
+export async function keepTargetAxAlive(this: MacOSPlatform, pid: number): Promise<void> {
+  const helperPath = resolveNativeHelper.call(this, "skylight", "skylight-helper");
+  if (!helperPath) return;
+  try {
+    execFileSync(helperPath, [], {
+      input: JSON.stringify({ command: "keepAlive", pid }),
+      encoding: "utf8",
+      timeout: 5000,
+    });
+  } catch {
+    // keepAlive is best-effort; ignore failures (helper missing / SPI unavailable).
+  }
 }
 
 export async function getActiveBrowserContext(this: MacOSPlatform, app?: string): Promise<BrowserContext | undefined> {

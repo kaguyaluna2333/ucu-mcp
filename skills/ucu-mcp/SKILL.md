@@ -63,6 +63,20 @@ whether your click actually landed:
 A `warnings[]` array in the receipt explains the fallback. Never assume a
 coordinate-fallback click succeeded without checking.
 
+### Dispatch method (v0.6.0+) — background operation
+
+Every input tool (`click`, `double_click`, `scroll`, `drag`, `move`, `type_text`,
+`press_key`) returns a `result.dispatch` field:
+
+| `dispatch` | Meaning |
+|---|---|
+| `"per-pid"` | Event posted to the target process via SLEventPostToPid/CGEventPostToPid — **no global cursor move, no foreground theft**. This is the default when `focus_app` has established a target. |
+| `"hid-tap"` | Event posted to the global HID event tap (moves the cursor, may disturb foreground). Happens when: no active target (call `focus_app` first), the target is frontmost, or the app is a canvas/GPU app (Blender/Unity/games) that filters per-pid events. |
+
+When `dispatch:"hid-tap"`, a `warnings[]` entry explains it. To avoid cursor
+movement, always `focus_app` the target before input actions, so events route
+per-process (Codex-style background operation).
+
 ## Tool selection — AX vs vision vs tray
 
 **AX-first** (precise, survives layout shifts):
@@ -112,6 +126,9 @@ also opaque.
 
 ## Operating Rules
 
+- **`focus_app` before input.** Input events route per-process (no cursor move,
+  no foreground theft) only when an active target with a pid is established.
+  Without `focus_app`, events fall back to HID-tap (moves the cursor).
 - **Re-observe before every action.** The screen changes between your calls.
   A `focus_app` from 5 calls ago may be stale; a window may have closed.
 - **AX-first, coordinates only as fallback.** AX clicks are precise and

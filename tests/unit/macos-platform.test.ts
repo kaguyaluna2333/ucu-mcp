@@ -1348,8 +1348,8 @@ describe("MacOSPlatform menu bar extras (tray)", () => {
     execFileSyncMock.mockImplementation((cmd: string) => {
       if (cmd === "osascript") {
         return JSON.stringify({ items: [
-          { menuBar: 0, index: 0, name: "Apple", description: null, x: 10, y: 0, width: 34, height: 33, host: "self" },
-          { menuBar: 0, index: 1, name: "CC Switch", description: null, x: 44, y: 0, width: 87, height: 33, host: "self" },
+          { menuBar: 0, index: 0, name: "Apple", description: null, x: 10, y: 0, width: 34, height: 33, host: "self", pid: 0 },
+          { menuBar: 0, index: 1, name: "CC Switch", description: null, x: 44, y: 0, width: 87, height: 33, host: "self", pid: 0 },
         ] });
       }
       return "";
@@ -1376,8 +1376,8 @@ describe("MacOSPlatform menu bar extras (tray)", () => {
   it("matchMenuBarExtra selects by name/description substring or index", async () => {
     const { matchMenuBarExtra } = await import("../../src/platform/macos/element.js");
     const items = [
-      { menuBar: 0, index: 0, name: "Apple", description: "", x: 10, y: 0, width: 34, height: 33, host: "self" as const },
-      { menuBar: 0, index: 1, name: "CC Switch", description: "status menu", x: 44, y: 0, width: 87, height: 33, host: "self" as const },
+      { menuBar: 0, index: 0, name: "Apple", description: "", x: 10, y: 0, width: 34, height: 33, host: "self" as const, pid: 0 },
+      { menuBar: 0, index: 1, name: "CC Switch", description: "status menu", x: 44, y: 0, width: 87, height: 33, host: "self" as const, pid: 0 },
     ];
     expect(matchMenuBarExtra(items, { name: "switch" })?.index).toBe(1);
     expect(matchMenuBarExtra(items, { description: "status" })?.index).toBe(1);
@@ -1405,7 +1405,7 @@ describe("MacOSPlatform menu bar extras (tray)", () => {
     execFileSyncMock.mockImplementation((cmd: string) => {
       if (cmd === "osascript") {
         return JSON.stringify({ items: [
-          { menuBar: 0, index: 3, name: "", description: "SomeTrayApp", x: 1200, y: 0, width: 30, height: 25, host: "systemuiserver" },
+          { menuBar: 0, index: 3, name: "", description: "SomeTrayApp", x: 1200, y: 0, width: 30, height: 25, host: "systemuiserver", pid: 188 },
         ] });
       }
       return "";
@@ -1420,8 +1420,8 @@ describe("MacOSPlatform menu bar extras (tray)", () => {
   it("matchMenuBarExtra treats host as transparent (does not affect selection)", async () => {
     const { matchMenuBarExtra } = await import("../../src/platform/macos/element.js");
     const items = [
-      { menuBar: 0, index: 0, name: "Apple", description: "", x: 0, y: 0, width: 0, height: 0, host: "self" as const },
-      { menuBar: 0, index: 2, name: "", description: "CC Switch", x: 1100, y: 0, width: 30, height: 25, host: "systemuiserver" as const },
+      { menuBar: 0, index: 0, name: "Apple", description: "", x: 0, y: 0, width: 0, height: 0, host: "self" as const, pid: 0 },
+      { menuBar: 0, index: 2, name: "", description: "CC Switch", x: 1100, y: 0, width: 30, height: 25, host: "systemuiserver" as const, pid: 188 },
     ];
     // 无 selector：Apple 被过滤，剩下 systemuiserver 托管项
     expect(matchMenuBarExtra(items, {})?.host).toBe("systemuiserver");
@@ -1434,7 +1434,7 @@ describe("MacOSPlatform menu bar extras (tray)", () => {
       if (cmd === "osascript") {
         // 第一次调用 findMenuBarExtra 返回 systemuiserver 托管项
         return JSON.stringify({ items: [
-          { menuBar: 0, index: 2, name: "", description: "TrayApp", x: 1100, y: 0, width: 30, height: 25, host: "systemuiserver" },
+          { menuBar: 0, index: 2, name: "", description: "TrayApp", x: 1100, y: 0, width: 30, height: 25, host: "systemuiserver", pid: 188 },
         ] });
       }
       return "";
@@ -1451,7 +1451,7 @@ describe("MacOSPlatform menu bar extras (tray)", () => {
     execFileSyncMock.mockImplementation((cmd: string) => {
       if (cmd === "osascript") {
         return JSON.stringify({ items: [
-          { menuBar: 0, index: 1, name: "CC Switch", description: "", x: 44, y: 0, width: 87, height: 33, host: "self" },
+          { menuBar: 0, index: 1, name: "CC Switch", description: "", x: 44, y: 0, width: 87, height: 33, host: "self", pid: 0 },
         ] });
       }
       return "";
@@ -1500,7 +1500,7 @@ describe("MacOSPlatform menu bar extras (tray)", () => {
     execFileSyncMock.mockImplementation((cmd: string) => {
       if (cmd === "osascript") {
         return JSON.stringify({ items: [
-          { menuBar: 0, index: 1, name: "CC Switch", description: "", x: 44, y: 0, width: 87, height: 33, host: "self" },
+          { menuBar: 0, index: 1, name: "CC Switch", description: "", x: 44, y: 0, width: 87, height: 33, host: "self", pid: 0 },
         ] });
       }
       return "";
