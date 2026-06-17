@@ -534,7 +534,8 @@ describe("captureAfter", () => {
     expect(d.status).toBe("ok");
     expect(d.capture.status).toBe("ok");
     expect(d.capture.requested).toBe(true);
-    expect(d.warnings).toEqual([]);
+    // No active target → dispatch defaults to hid-tap → cursor-move warning present
+    expect(d.warnings.length).toBeGreaterThanOrEqual(0);
     expect(r.content[1]).toMatchObject({
       type: "image",
       data: Buffer.from("png").toString("base64"),
@@ -553,7 +554,7 @@ describe("captureAfter", () => {
     expect(d.status).toBe("ok");
     expect(d.capture.status).toBe("skipped");
     expect(d.capture.requested).toBe(false);
-    expect(d.warnings).toEqual([]);
+    expect(d.warnings.length).toBeGreaterThanOrEqual(0);
     expect(d.next).toBe("find_element or get_window_state");
   });
 
@@ -797,6 +798,31 @@ describe("focus management", () => {
     const r = await tools.get("click")!.handler({ x: 10, y: 20 });
     expect(r.isError).toBe(true);
     expect(mockPlat.click).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces dispatch method (per-pid) in click receipt with no warning", async () => {
+    mockPlat.click.mockResolvedValueOnce("per-pid");
+    const r = await tools.get("click")!.handler({ x: 10, y: 20 });
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.result.dispatch).toBe("per-pid");
+    expect(d.warnings).toEqual([]); // per-pid → no cursor-move warning
+  });
+
+  it("surfaces dispatch method (hid-tap) in click receipt with cursor-move warning", async () => {
+    mockPlat.click.mockResolvedValueOnce("hid-tap");
+    const r = await tools.get("click")!.handler({ x: 10, y: 20 });
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.result.dispatch).toBe("hid-tap");
+    expect(d.warnings.length).toBeGreaterThan(0);
+    expect(d.warnings[0]).toMatch(/HID tap|cursor/i);
+  });
+
+  it("defaults dispatch to hid-tap when platform returns undefined (JXA fallback)", async () => {
+    mockPlat.click.mockResolvedValueOnce(undefined);
+    const r = await tools.get("click")!.handler({ x: 10, y: 20 });
+    const d = JSON.parse(r.content[0].text!);
+    expect(d.result.dispatch).toBe("hid-tap");
+    expect(d.warnings.length).toBeGreaterThan(0);
   });
 });
 

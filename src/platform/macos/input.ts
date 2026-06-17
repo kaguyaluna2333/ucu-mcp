@@ -6,10 +6,27 @@ import type { DispatchMethod } from "../base.js";
 import { PlatformError } from "../../util/errors.js";
 import { rethrowInputError, errorMessage } from "./helpers.js";
 
+/**
+ * Process names that must NEVER receive per-process input injection (security).
+ * Per-process posting bypasses the frontmost/focus requirement, so without this
+ * denylist an attacker could deliver keystrokes/clicks directly into a password
+ * manager or auth dialog. These fall back to HID-tap (which at least requires
+ * the app to be frontmost / visible to the user).
+ */
+const SENSITIVE_PROCESS_HINTS = [
+  "keychainaccess", "1password", "lastpass", "bitwarden", "securityagent",
+  "authd", "loginwindow", "applekeychain", "dashlane",
+];
+
 /** Resolve the per-process event target from the active focus_app target (pid + windowNumber). */
 function targetOf(this: MacOSPlatform): InputTarget | undefined {
   const t = this.activeTarget;
   if (!t || !t.pid || t.pid <= 0) return undefined;
+  // Security: never route per-process events into sensitive apps (password managers / auth).
+  const name = (t.appName || "").toLowerCase();
+  if (SENSITIVE_PROCESS_HINTS.some((h) => name.includes(h))) {
+    return undefined; // forces HID-tap fallback (requires frontmost)
+  }
   return { pid: t.pid, windowNumber: t.windowNumber };
 }
 

@@ -129,9 +129,10 @@ func makeMouseEvent(_ type: CGEventType, at point: CGPoint, button: CGMouseButto
 
 /// Stamp a mouse event with the fields Chromium's synthetic-event filter requires,
 /// then post it to the target pid via SLEventPostToPid (no global cursor move).
-func postPerPid(_ event: CGEvent, pid: Int32, at point: CGPoint, windowNumber: Int) {
+func postPerPid(_ event: CGEvent, pid: Int32, at point: CGPoint, windowNumber: Int, button: CGMouseButton = .left) {
     event.location = point
-    event.setIntegerValueField(.mouseEventButtonNumber, value: 0)
+    // Stamp the correct button number (0=left, 1=right, 2=center) — NOT hardcoded 0.
+    event.setIntegerValueField(.mouseEventButtonNumber, value: Int64(button.rawValue))
     event.setIntegerValueField(.mouseEventSubtype, value: 3)
     if windowNumber > 0 {
         event.setIntegerValueField(.mouseEventWindowUnderMousePointer, value: Int64(windowNumber))
@@ -191,49 +192,30 @@ func focusWithoutRaise(pid: Int32, windowID: Int) {
 
 // MARK: - AX keepalive (root-cause fix for Electron/Tauri AXPress silent failure)
 
-/// Keep the target app's AX tree alive when occluded/background. Best-effort —
-/// no error if SPIs are absent (older macOS). Writes AXManualAccessibility and
-/// AXEnhancedUserInterface hints and subscribes a remote-aware observer via the
-/// private _AXObserverAddNotificationAndCheckRemote (falls back to public API).
+/// Keep the target app's AX tree alive when occluded/background.
+///
+/// Writes the AXManualAccessibility attribute (persists for the app's lifetime,
+/// independent of this helper process). AXEnhancedUserInterface is NOT set
+/// unconditionally — it's known to slow/break some apps (Xcode, Slack, Office);
+/// gate it behind the UCU_AX_ENHANCED env var if needed.
+///
+/// The observer-based remote-aware keepalive (_AXObserverAddNotificationAndCheckRemote)
+/// requires a long-lived process to hold the subscription; this helper is one-shot
+/// (readLine → exit), so the observer would be dropped on exit. We therefore rely on
+/// the persistent attribute writes, which cover non-Chromium occluded apps. Full
+/// Chromium keepalive would require a daemon helper (future work).
 func doKeepAlive(_ p: Input) -> String {
     guard let pid = p.pid, pid > 0 else { return "{\"error\":\"no pid\"}" }
     let app = AXUIElementCreateApplication(pid)
-    // Attribute hints: tell the app to expose its full AX tree even when occluded.
-    AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue!)
-    AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue!)
-
-    // Create an observer. AXObserverCreate is public; we keep a no-op callback
-    // since we only need the subscription to hold the tree live, not act on events.
-    let cb: @convention(c) (AXObserver, AXUIElement, CFString, UnsafeMutableRawPointer?) -> Void = { _, _, _, _ in }
-    var observerOpt: AXObserver?
-    let createStatus = AXObserverCreate(pid, cb, &observerOpt)
-    guard createStatus == .success, let observer = observerOpt else {
-        return "{\"ok\":true,\"method\":\"ax-keepalive\",\"remote\":false,\"reason\":\"observer-create-failed\"}"
+    // AXManualAccessibility: safe, persistent, tells the app to expose its AX tree.
+    let manualStatus = AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue!)
+    // AXEnhancedUserInterface: opt-in only (breaks some apps when unconditional).
+    var enhancedStatus: AXError = .cannotComplete
+    if ProcessInfo.processInfo.environment["UCU_AX_ENHANCED"] != nil {
+        enhancedStatus = AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue!)
     }
-
-    let notifications = [
-        kAXFocusedUIElementChangedNotification, kAXFocusedWindowChangedNotification,
-        kAXApplicationActivatedNotification, kAXMainWindowChangedNotification,
-        kAXWindowCreatedNotification, kAXCreatedNotification,
-        kAXTitleChangedNotification, kAXLayoutChangedNotification,
-    ] as [CFString]
-
-    // Prefer the private remote-aware SPI; fall back to the public API.
-    // Both have signature: AXError f(AXObserver, AXUIElement, CFString, void*)
-    typealias AddNotifFn = @convention(c) (AXObserver, AXUIElement, CFString, UnsafeMutableRawPointer?) -> AXError
-    let remoteFn = sym("AXObserverAddNotificationAndCheckRemote", as: AddNotifFn.self)
-    var usedRemote = false
-    for n in notifications {
-        if let fn = remoteFn {
-            _ = fn(observer, app, n, nil)
-            usedRemote = true
-        } else {
-            _ = AXObserverAddNotification(observer, app, n, nil)
-        }
-    }
-    // Add the observer to the current run loop so subscriptions stay active.
-    CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(observer), .defaultMode)
-    return "{\"ok\":true,\"method\":\"ax-keepalive\",\"remote\":\(usedRemote)}"
+    let ok = (manualStatus == .success)
+    return "{\"ok\":\(ok),\"method\":\"ax-keepalive\",\"manual\":\(manualStatus == .success),\"enhanced\":\(enhancedStatus == .success)}"
 }
 
 // MARK: - Commands
@@ -254,7 +236,7 @@ func doClick(_ p: Input) -> String {
     focusWithoutRaise(pid: pid, windowID: winNum)
     // Leading mouseMoved at target (cursor-state primer).
     if let mv = makeMouseEvent(.mouseMoved, at: loc, button: b, windowNumber: winNum) {
-        postPerPid(mv, pid: pid, at: loc, windowNumber: winNum); usleep(15_000)
+        postPerPid(mv, pid: pid, at: loc, windowNumber: winNum, button: b); usleep(15_000)
     }
     // Off-screen primer click @ (-1,-1) — satisfies Chromium user-activation gate.
     let off = CGPoint(x: -1, y: -1)
@@ -267,8 +249,8 @@ func doClick(_ p: Input) -> String {
     guard let dn = makeMouseEvent(downT(b), at: loc, button: b, windowNumber: winNum),
           let up = makeMouseEvent(upT(b), at: loc, button: b, windowNumber: winNum)
     else { return "{\"error\":\"fail\"}" }
-    postPerPid(dn, pid: pid, at: loc, windowNumber: winNum); usleep(1_000)
-    postPerPid(up, pid: pid, at: loc, windowNumber: winNum)
+    postPerPid(dn, pid: pid, at: loc, windowNumber: winNum, button: b); usleep(1_000)
+    postPerPid(up, pid: pid, at: loc, windowNumber: winNum, button: b)
     return "{\"ok\":true,\"method\":\"per-pid\"}"
 }
 
@@ -285,8 +267,8 @@ func doDoubleClick(_ p: Input) -> String {
         guard let dn = makeMouseEvent(downT(b), at: loc, button: b, clickCount: state, windowNumber: winNum),
               let up = makeMouseEvent(upT(b), at: loc, button: b, clickCount: state, windowNumber: winNum)
         else { return "{\"error\":\"fail\"}" }
-        postPerPid(dn, pid: pid, at: loc, windowNumber: winNum); usleep(1_000)
-        postPerPid(up, pid: pid, at: loc, windowNumber: winNum)
+        postPerPid(dn, pid: pid, at: loc, windowNumber: winNum, button: b); usleep(1_000)
+        postPerPid(up, pid: pid, at: loc, windowNumber: winNum, button: b)
         if state == 1 { usleep(80_000) }
     }
     return "{\"ok\":true,\"method\":\"per-pid\"}"
@@ -314,7 +296,7 @@ func doMove(_ p: Input) -> String {
     let loc = CGPoint(x: p.x ?? 0, y: p.y ?? 0)
     let winNum = p.windowNumber ?? 0
     if let ev = makeMouseEvent(.mouseMoved, at: loc, button: .left, windowNumber: winNum) {
-        postPerPid(ev, pid: pid, at: loc, windowNumber: winNum)
+        postPerPid(ev, pid: pid, at: loc, windowNumber: winNum, button: .left)
         return "{\"ok\":true,\"method\":\"per-pid\"}"
     }
     return "{\"error\":\"fail\"}"
@@ -344,17 +326,17 @@ func doDrag(_ p: Input) -> String {
     focusWithoutRaise(pid: pid, windowID: winNum)
     guard let dn = makeMouseEvent(downT(b), at: from, button: b, windowNumber: winNum)
     else { return "{\"error\":\"fail\"}" }
-    postPerPid(dn, pid: pid, at: from, windowNumber: winNum)
+    postPerPid(dn, pid: pid, at: from, windowNumber: winNum, button: b)
     for n in 1...steps {
         let t = Double(n) / Double(steps)
         let pt = CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t)
         if let ev = makeMouseEvent(dragT(b), at: pt, button: b, windowNumber: winNum) {
-            postPerPid(ev, pid: pid, at: pt, windowNumber: winNum)
+            postPerPid(ev, pid: pid, at: pt, windowNumber: winNum, button: b)
         }
         if delay > 0 && n < steps { usleep(UInt32(delay)) }
     }
     if let up = makeMouseEvent(upT(b), at: to, button: b, windowNumber: winNum) {
-        postPerPid(up, pid: pid, at: to, windowNumber: winNum)
+        postPerPid(up, pid: pid, at: to, windowNumber: winNum, button: b)
     }
     return "{\"ok\":true,\"method\":\"per-pid\"}"
 }

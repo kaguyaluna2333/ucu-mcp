@@ -14,7 +14,8 @@ import {
 const HID_TAP_WARNING = "Event dispatched via global HID tap (moved the cursor / may disturb foreground). This happens for frontmost or canvas/GPU apps where per-process posting is filtered.";
 
 function dispatchWarnings(dispatch: DispatchMethod | undefined): string[] {
-  return dispatch === "hid-tap" ? [HID_TAP_WARNING] : [];
+  // undefined means JXA fallback (HID-tap) or no target — warn in both cases.
+  return dispatch === "per-pid" ? [] : [HID_TAP_WARNING];
 }
 
 export function registerInputTools(registerTool: RegisterToolFn): void {

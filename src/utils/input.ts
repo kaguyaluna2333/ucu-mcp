@@ -89,26 +89,39 @@ function isNativeAvailable(): boolean {
  * Run an input command via the best available helper.
  * - target.pid > 0 AND skylight available → skylight-helper (per-process, no cursor move). Returns "per-pid".
  * - otherwise → cgevent-helper (HID tap, moves cursor). Returns "hid-tap".
- * Throws on helper error.
+ * If skylight is chosen but errors at runtime, falls back to cgevent (HID-tap) rather than throwing.
+ * Throws only if BOTH helpers fail.
  */
 function runInputChecked(payload: Record<string, unknown>, target?: InputTarget): DispatchMethod {
   const useSkylight = !!target?.pid && target.pid > 0 && isSkylightAvailable();
-  const helperPath = useSkylight ? resolvedSkylightPath : resolvedCgeventPath;
-  const fullPayload = useSkylight
-    ? { ...payload, pid: target!.pid, windowNumber: target!.windowNumber }
-    : payload;
-  const raw = execFileSync(helperPath, [], {
-    input: JSON.stringify(fullPayload),
+  if (useSkylight) {
+    const fullPayload = { ...payload, pid: target!.pid, windowNumber: target!.windowNumber };
+    try {
+      const raw = execFileSync(resolvedSkylightPath, [], {
+        input: JSON.stringify(fullPayload),
+        encoding: "utf8",
+        timeout: 10000,
+      }).trim();
+      const resp = JSON.parse(raw);
+      if (!resp.error) {
+        return (resp.method === "per-pid") ? "per-pid" : "hid-tap";
+      }
+      // skylight errored at runtime (SPI filtered / event build failed) → fall through to cgevent.
+    } catch {
+      // skylight crashed/timed out → fall through to cgevent.
+    }
+  }
+  // cgevent path (HID-tap) — the reliable fallback.
+  const raw = execFileSync(resolvedCgeventPath, [], {
+    input: JSON.stringify(payload),
     encoding: "utf8",
     timeout: 10000,
   }).trim();
   const resp = JSON.parse(raw);
   if (resp.error) {
-    // skylight SPI missing/unavailable → caller falls back to cgevent via the dispatch decision above.
-    // If skylight was chosen but errored at runtime, surface it so the caller can retry on HID-tap.
     throw new Error(`native helper error: ${resp.error}`);
   }
-  return useSkylight ? "per-pid" : "hid-tap";
+  return "hid-tap";
 }
 
 /** @deprecated use runInputChecked — kept for external callers/tests. */

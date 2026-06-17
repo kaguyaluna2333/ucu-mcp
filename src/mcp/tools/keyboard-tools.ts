@@ -11,7 +11,8 @@ import {
 } from "./helpers.js";
 
 function keyDispatchWarnings(dispatch: DispatchMethod | undefined): string[] {
-  return dispatch === "hid-tap" ? ["Key event dispatched via global HID tap (no target pid available; may affect foreground). Use focus_app first to enable per-process posting."] : [];
+  // undefined means JXA fallback (HID-tap) or no target — warn in both cases.
+  return dispatch === "per-pid" ? [] : ["Key event dispatched via global HID tap (no target pid available; may affect foreground). Use focus_app first to enable per-process posting."];
 }
 
 export function registerKeyboardTools(registerTool: RegisterToolFn): void {
