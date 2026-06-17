@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-06-17
+
+修 `normalizeAppName` 名字匹配 bug + 清理死代码 + 补 TTL 测试。
+
+### Fixed
+
+- **selectWindowForApp 名字匹配 bug**（`helpers.ts`）：`normalizeAppName` 只做 `trim().toLowerCase()`，导致 `"cc-switch"`（用户输入）无法匹配 `"CC Switch"`（`NSRunningApplication.localizedName`）。fix：drop 所有非字母数字字符（`.replace(/[^a-z0-9]/g, "")`），所有变体归一化到 `"ccswitch"`。之前 `focus_app("cc-switch")` 因名字 mismatch 退到 tray fallback，误诊为 per-process 失效。
+- **appNameMatches 死代码清理**：去掉 startsWith/includes 带空格的条件（normalize 后无空格，永不命中），改为 includes 双向匹配。
+
+### Added
+
+- **denied/granted TTL 时效测试**（`permissions.test.ts`）：用 fake timers 验证 denied 1s / granted 5s 后 cache 失效重查（之前 Sync 73 记录说写了但未 commit）。
+
+### 真机验证
+
+- per-process 对 ZCode（原生 SwiftUI）完全生效：click(735,478) 返回 dispatch:per-pid，Warp 始终前台不被抢。
+
+## [0.6.1] - 2026-06-17
+
+响应流程并行化 + 短期缓存，降低 describe_screen / screenshot(describe) / focus_app 延迟。
+
+### Changed
+
+- **并发收集 describe_screen 4 源**：OCR + AX + foreground + screen 用 `Promise.all` 并发（之前串行）。
+- **并发 getSafetyContext**：listWindows + browser context 并行。
+- **并发 screenshot + describe**：`screenshot(describe:true)` 的截图和描述生成并行。
+- **listWindows in-flight 去重**：并发请求共享同一个 promise，避免重复 windowlist-helper 子进程。
+- **getScreenSize 实例缓存**：5s TTL。
+
+### Added
+
+- **permission check cache**（`permissions.ts`）：granted 5s / denied 1s TTL。denied 短 TTL 让用户授权后快速生效。
+- **AXPress spin 可调**：80ms→50ms 默认，env `UCU_AXPRESS_SPIN_MS` 可调（max 80ms）。
+
+### Tests
+
+- permission cache 测试、AXPress spin timing 测试。326 passed。
+
 ## [0.6.0] - 2026-06-17
 
 对标 Codex 原生 computer use：输入注入走 per-process 路径，不移动全局光标、不抢前台。仅 Mac 端（与 Codex mac 版一致，Win 版只前台）。

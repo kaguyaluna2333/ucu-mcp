@@ -50,10 +50,10 @@ export function appNameMatches(processName: string, requestedApp: string): boole
   const process = normalizeAppName(processName);
   const requested = normalizeAppName(requestedApp);
   if (!process || !requested) return false;
-  return process === requested ||
-    process.startsWith(`${requested} `) ||
-    process.startsWith(`${requested}-`) ||
-    process.includes(` ${requested} `);
+  // normalizeAppName strips all non-alphanumerics, so equality is the only
+  // meaningful comparison. (Prior startsWith/includes with spaces were dead code
+  // since normalized strings contain no spaces/hyphens.)
+  return process === requested || process.includes(requested) || requested.includes(process);
 }
 
 export function selectWindowForApp(windows: import("../base.js").WindowInfo[], requestedApp: string): import("../base.js").WindowInfo | undefined {

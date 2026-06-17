@@ -87,4 +87,53 @@ describe("permissions", () => {
     const osascriptCalls = execFileMock.mock.calls.filter((c) => c[0] === "/usr/bin/osascript");
     expect(osascriptCalls.length).toBe(2);
   });
+
+  // ── TTL expiry (denied 1s / granted 5s) ────────────────────────────────
+  // Count only the "count of processes" osascript (checkAccessibility probe),
+  // not requestAccessibilityWithPrompt which runs on every denied call.
+  const checkProbeCalls = () =>
+    execFileMock.mock.calls.filter((c) => c[0] === "/usr/bin/osascript" && String(c[1]).includes("count of processes")).length;
+
+  it("denied permission cache expires after 1s and re-checks", async () => {
+    vi.useFakeTimers();
+    try {
+      accessDenied = true;
+      await checkPermission("accessibility");
+      const probesAfterFirst = checkProbeCalls();
+      expect(probesAfterFirst).toBe(1);
+
+      // Within 1s → cache hit, no new probe.
+      vi.setSystemTime(Date.now() + 500);
+      await checkPermission("accessibility");
+      expect(checkProbeCalls()).toBe(1);
+
+      // After 1.2s → cache expired, re-check.
+      vi.setSystemTime(Date.now() + 1200);
+      await checkPermission("accessibility");
+      expect(checkProbeCalls()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("granted permission cache expires after 5s and re-checks", async () => {
+    vi.useFakeTimers();
+    try {
+      accessDenied = false;
+      await checkPermission("accessibility");
+      expect(checkProbeCalls()).toBe(1);
+
+      // Within 5s → cache hit.
+      vi.setSystemTime(Date.now() + 3000);
+      await checkPermission("accessibility");
+      expect(checkProbeCalls()).toBe(1);
+
+      // After 6s → cache expired, re-check.
+      vi.setSystemTime(Date.now() + 6000);
+      await checkPermission("accessibility");
+      expect(checkProbeCalls()).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
