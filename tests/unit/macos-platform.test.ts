@@ -23,7 +23,7 @@ function lastJxaScript(): string {
  *  behavior or set up precise mock sequences for listWindows need
  *  this so the native helper doesn't consume an execFileSync call. */
 function jxaOnlyPlatform(): MacOSPlatform {
-  return new MacOSPlatform({ nativeHelperPaths: { windowlist: null } });
+  return new MacOSPlatform({ nativeHelperPaths: { windowlist: null, skylight: null } });
 }
 
 describe("MacOSPlatform", () => {

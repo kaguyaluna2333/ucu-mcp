@@ -13,9 +13,12 @@ import { rethrowInputError, errorMessage } from "./helpers.js";
  * manager or auth dialog. These fall back to HID-tap (which at least requires
  * the app to be frontmost / visible to the user).
  */
+// Normalized (non-alphanumeric-stripped) so "Keychain Access" → "keychainaccess" matches.
 const SENSITIVE_PROCESS_HINTS = [
-  "keychainaccess", "1password", "lastpass", "bitwarden", "securityagent",
-  "authd", "loginwindow", "applekeychain", "dashlane",
+  "keychainaccess", "keychain", "1password", "lastpass", "bitwarden", "keepassxc",
+  "securityagent", "coreauthui", "authd", "loginwindow", "applekeychain", "dashlane",
+  "enpass", "keeper", "passwords", // macOS Passwords app (Sequoia+)
+  "systempreferences", "systemsettings", // where ucu-mcp's own permissions live
 ];
 
 /** Resolve the per-process event target from the active focus_app target (pid + windowNumber). */
@@ -23,7 +26,8 @@ function targetOf(this: MacOSPlatform): InputTarget | undefined {
   const t = this.activeTarget;
   if (!t || !t.pid || t.pid <= 0) return undefined;
   // Security: never route per-process events into sensitive apps (password managers / auth).
-  const name = (t.appName || "").toLowerCase();
+  // Normalize by stripping non-alphanumerics so "Keychain Access" → "keychainaccess".
+  const name = (t.appName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   if (SENSITIVE_PROCESS_HINTS.some((h) => name.includes(h))) {
     return undefined; // forces HID-tap fallback (requires frontmost)
   }

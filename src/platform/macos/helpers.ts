@@ -50,10 +50,12 @@ export function appNameMatches(processName: string, requestedApp: string): boole
   const process = normalizeAppName(processName);
   const requested = normalizeAppName(requestedApp);
   if (!process || !requested) return false;
-  // normalizeAppName strips all non-alphanumerics, so equality is the only
-  // meaningful comparison. (Prior startsWith/includes with spaces were dead code
-  // since normalized strings contain no spaces/hyphens.)
-  return process === requested || process.includes(requested) || requested.includes(process);
+  if (process === requested) return true;
+  // Substring match only for requests >= 3 chars to avoid "code"→"vscode".
+  // Only allow process.includes(requested) (not bidirectional) to prevent
+  // short requests greedily absorbing longer unrelated process names.
+  if (requested.length >= 3 && process.includes(requested)) return true;
+  return false;
 }
 
 export function selectWindowForApp(windows: import("../base.js").WindowInfo[], requestedApp: string): import("../base.js").WindowInfo | undefined {

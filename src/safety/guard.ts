@@ -115,13 +115,22 @@ const MODIFIER_CANONICAL: Record<string, string> = {
 
 /** Normalize a shortcut string to lowercase, trimmed, sorted modifiers with
  *  modifier aliases canonicalized (alt→option, ctrl→control, cmd→command). */
+/** Canonical key name aliases — so blocklist entries match all spellings. */
+const KEY_CANONICAL: Record<string, string> = {
+  escape: "esc",
+  delete: "del",
+  backspace: "del",
+  return: "enter",
+  option: "alt",
+};
+
 function normalizeShortcut(raw: string): string {
   return raw
     .toLowerCase()
     .split("+")
     .map((s) => {
       const t = s.trim();
-      return MODIFIER_CANONICAL[t] ?? t;
+      return MODIFIER_CANONICAL[t] ?? KEY_CANONICAL[t] ?? t;
     })
     .sort()
     .join("+");
@@ -144,7 +153,6 @@ export const OBSERVE_ACTIONS: ReadonlySet<string> = new Set([
   "wait",
   "wait_for_element",
   "doctor",
-  "clipboard_read",
   // focus_app only sets the active target context via AppleScript activate
   // and an AX window lookup — it does not synthesize mouse or keyboard input,
   // so the user-activity pause must not block it. (OpenCode 0.3.7 follow-up)
@@ -153,7 +161,7 @@ export const OBSERVE_ACTIONS: ReadonlySet<string> = new Set([
   "describe_screen",
 ]);
 
-/** Actions that synthesize user input — need full user-activity protection. */
+/** Actions that synthesize user input OR access sensitive data — need full user-activity protection. */
 export const INPUT_ACTIONS: ReadonlySet<string> = new Set([
   "click",
   "double_click",
@@ -166,6 +174,9 @@ export const INPUT_ACTIONS: ReadonlySet<string> = new Set([
   "type_in_element",
   "set_value",
   "click_menu_bar_extra",
+  // clipboard_read accesses potentially sensitive data (passwords/TOTP copied
+  // by password managers) — treat as input so the user-activity pause applies.
+  "clipboard_read",
   "clipboard_write",
 ]);
 

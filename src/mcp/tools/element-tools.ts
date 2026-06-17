@@ -30,6 +30,14 @@ export function registerElementTools(registerTool: RegisterToolFn): void {
     const safetyCtx = await getSafetyContext(undefined);
     const response = await withSafety<FindElementResponse>({ action: "find_element", params: { ...safetyCtx }, requiresAccessibility: true,
       execute: () => getPlatform().findElement({ text: params.text, role: params.role, app: effectiveApp, depth: params.depth, includeBounds: params.includeBounds, maxResults: params.maxResults, textMode: params.textMode, visibleOnly: params.visibleOnly, value: params.value, index: params.index, near: params.near }) });
+    // Security: mask password/secret field values before returning to the model.
+    const SENSITIVE_RE = /password|passwd|secret|pincode|pin\b|token|credential|api[_-]?key|access[_-]?key|private[_-]?key/i;
+    const SENSITIVE_ROLES = new Set(["AXSecureTextField", "AXPasswordField"]);
+    for (const r of response.results) {
+      if (SENSITIVE_ROLES.has(r.role) || SENSITIVE_RE.test(r.name || "")) {
+        r.value = "[REDACTED]";
+      }
+    }
     const payload: Record<string, unknown> = { results: response.results, metrics: response.metrics };
     if (response.results.length === 0 && effectiveApp && response.metrics.scannedCount === 0) {
       payload.hint =

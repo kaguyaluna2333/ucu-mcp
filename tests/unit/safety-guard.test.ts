@@ -141,7 +141,9 @@ describe("OBSERVE_ACTIONS / INPUT_ACTIONS classification (M6.1)", () => {
       "wait",
       "wait_for_element",
       "doctor",
-      "clipboard_read",
+      // clipboard_read moved to INPUT_ACTIONS (v0.6.4 security review: it
+      // accesses potentially sensitive data — passwords/TOTP — and should
+      // honor the user-activity pause).
       // focus_app is read-only: it only sets the active target context via
       // AppleScript activate and an AX window lookup — it does not synthesize
       // mouse or keyboard input, so the user-activity pause must not block it.
@@ -315,8 +317,8 @@ describe("clipboard injection safety (TST-P1-1)", () => {
     expect(result.allowed).toBe(true);
   });
 
-  it("clipboard_read is classified as observe action", () => {
-    expect(classifyAction("clipboard_read")).toBe("observe");
+  it("clipboard_read is classified as input action (v0.6.4: sensitive data access)", () => {
+    expect(classifyAction("clipboard_read")).toBe("input");
   });
 
   it("clipboard_write is classified as input action", () => {

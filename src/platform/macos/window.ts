@@ -113,15 +113,23 @@ export async function focusApp(this: MacOSPlatform, app: string): Promise<AppTar
 export async function keepTargetAxAlive(this: MacOSPlatform, pid: number): Promise<void> {
   const helperPath = resolveNativeHelper.call(this, "skylight", "skylight-helper");
   if (!helperPath) return;
-  try {
-    execFileSync(helperPath, [], {
-      input: JSON.stringify({ command: "keepAlive", pid }),
-      encoding: "utf8",
-      timeout: 5000,
+  // Defer to next tick so execFileSync doesn't block the current event loop tick.
+  // Lower timeout (1s) — keepAlive should be near-instant; 5s was too long.
+  await new Promise<void>((resolve) => {
+    setImmediate(() => {
+      try {
+        execFileSync(helperPath, [], {
+          input: JSON.stringify({ command: "keepAlive", pid }),
+          encoding: "utf8",
+          timeout: 1000,
+        });
+      } catch {
+        // keepAlive is best-effort; ignore failures (helper missing / SPI unavailable).
+      } finally {
+        resolve();
+      }
     });
-  } catch {
-    // keepAlive is best-effort; ignore failures (helper missing / SPI unavailable).
-  }
+  });
 }
 
 export async function getActiveBrowserContext(this: MacOSPlatform, app?: string): Promise<BrowserContext | undefined> {

@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-06-18
+
+4 个独立子 Agent 全面 code review 后的修复（skylight/element/tests/security）。
+
+### P0 Fixed（bugs/security）
+
+- **focusWithoutRaise 返回值检查反转**（skylight/main.swift:170）：`!= 0` 应为 `== 0`（OSStatus 0=success）。原代码导致 focus-without-raise 完全失效——per-pid 点击落到 AppKit 当前认为 active 的窗口，不一定是目标。
+- **runInputChecked cgevent fallback ENOENT**（utils/input.ts）：skylight-only 环境下 skylight 运行时错误会直接 throw ENOENT（cgevent-helper 不存在）。加 isCgeventAvailable 门控 + try/catch。
+- **appNameMatches 过度匹配**（helpers.ts）：双向 includes 导致 `"code"` 匹配 `"vscode"`。改为单向 process.includes(requested) + 最小 3 字符长度。
+- **needCoordinateClick 静默返回 axpress 成功**（element.ts）：JXA 请求坐标点击但 cx/cy 缺失时，原代码 fallthrough 返回 `{method:"axpress"}`（谎报成功）。改为抛 ElementNotFoundError。
+- **normalizeShortcut 别名绕过**（guard.ts）：`escape`→`esc`、`delete`→`del`、`return`→`enter` 不规范化，blocklist 可被长格式键名绕过（如 `cmd+option+escape` 不匹配 `command+esc+option`）。加 KEY_CANONICAL 表。
+- **find_element 密码字段不脱敏**（element-tools.ts）：AXSecureTextField/AXPasswordField 的 value 原样返回给模型。加 SENSITIVE_RE 脱敏为 `[REDACTED]`。
+- **clipboard_read 重分类为 input**（guard.ts）：从 OBSERVE_ACTIONS 移到 INPUT_ACTIONS。clipboard 可能含密码/TOTP，应受 user-activity pause 保护。
+
+### P1 Fixed（correctness/robustness）
+
+- **isSkylightAvailable 不检查 skylight:true**（utils/input.ts）：只查 `"ok"` 不查 `"skylight":true`，SPI 加载失败时仍认为可用。改为 regex 匹配 `/"skylight"\s*:\s*true/`。
+- **keepTargetAxAlive execFileSync 阻塞事件循环 5s**（window.ts）：fire-and-forget 但 execFileSync 同步阻塞。改为 setImmediate 让出 tick + timeout 5s→1s。
+- **doScroll 误报 per-pid**（skylight/main.swift）：scroll 事件无 field-40/window-loc 标记但返回 `method:"per-pid"`，调用方误以为成功。诚实报告 `hid-tap`。
+- **SENSITIVE_PROCESS_HINTS 不含空格变体 + 缺失条目**（input.ts）：`"keychainaccess"` 不匹配 `"keychain access"`（带空格）。改为 normalized 比对（strip 非字母数字）+ 补 keychain/keepassxc/coreauthui/passwords/systemsettings 等。
+
+### Tests
+
+- 328 passed（修复 clipboard_read 分类测试 + jxaOnlyPlatform 加 skylight:null 避免 keepTargetAxAlive 消耗 mock）。
+
 ## [0.6.3] - 2026-06-17
 
 SKILL.md Confirmation Policy + 修 permissions.test.ts CI 在 Ubuntu 全挂的 bug。

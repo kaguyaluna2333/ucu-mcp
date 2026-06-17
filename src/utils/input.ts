@@ -73,7 +73,7 @@ function isSkylightAvailable(): boolean {
       encoding: "utf8",
       timeout: 3000,
     });
-    _skylightAvailable = stdout.includes('"ok"');
+    _skylightAvailable = /"skylight"\s*:\s*true/.test(stdout);
   } catch {
     _skylightAvailable = false;
   }
@@ -111,17 +111,26 @@ function runInputChecked(payload: Record<string, unknown>, target?: InputTarget)
       // skylight crashed/timed out → fall through to cgevent.
     }
   }
-  // cgevent path (HID-tap) — the reliable fallback.
-  const raw = execFileSync(resolvedCgeventPath, [], {
-    input: JSON.stringify(payload),
-    encoding: "utf8",
-    timeout: 10000,
-  }).trim();
-  const resp = JSON.parse(raw);
-  if (resp.error) {
-    throw new Error(`native helper error: ${resp.error}`);
+  // cgevent path (HID-tap) — the reliable fallback. Guard against ENOENT
+  // (cgevent-helper missing) when only skylight was available.
+  if (!isCgeventAvailable()) {
+    throw new Error("input dispatch failed: no native helper available (both cgevent and skylight unavailable or errored)");
   }
-  return "hid-tap";
+  try {
+    const raw = execFileSync(resolvedCgeventPath, [], {
+      input: JSON.stringify(payload),
+      encoding: "utf8",
+      timeout: 10000,
+    }).trim();
+    const resp = JSON.parse(raw);
+    if (resp.error) {
+      throw new Error(`native helper error: ${resp.error}`);
+    }
+    return "hid-tap";
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith("native helper error:")) throw e;
+    throw new Error(`input dispatch failed: cgevent helper unavailable (${(e as Error).message})`);
+  }
 }
 
 /** @deprecated use runInputChecked — kept for external callers/tests. */

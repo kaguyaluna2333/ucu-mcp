@@ -156,7 +156,10 @@ export async function clickElement(this: MacOSPlatform, elementId: string, app?:
   }
   // JXA requested a coordinate click → perform it via the input layer (per-process
   // when a pid is available, so the global cursor does not move).
-  if (result.needCoordinateClick && typeof result.cx === "number" && typeof result.cy === "number") {
+  if (result.needCoordinateClick) {
+    if (typeof result.cx !== "number" || typeof result.cy !== "number") {
+      throw new ElementNotFoundError(`${elementId}: element requested coordinate click but reported no bounds (offscreen?)`);
+    }
     await this.click(Math.round(result.cx), Math.round(result.cy), "left", false);
     return { method: "coordinate", verified: false };
   }
@@ -602,7 +605,10 @@ export async function clickMenuBarExtra(this: MacOSPlatform, app: string, select
   if (!result.success) {
     throw new Error(`click_menu_bar_extra failed in ${app}: ${result.error}`);
   }
-  if (result.needCoordinateClick && typeof result.cx === "number" && typeof result.cy === "number") {
+  if (result.needCoordinateClick) {
+    if (typeof result.cx !== "number" || typeof result.cy !== "number") {
+      throw new ElementNotFoundError(`menu bar extra in ${app}: requested coordinate click but no bounds`);
+    }
     await this.click(Math.round(result.cx), Math.round(result.cy), "left", false);
     return { method: "coordinate", verified: false };
   }

@@ -167,7 +167,7 @@ func focusWithoutRaise(pid: Int32, windowID: Int) {
           windowID > 0 else { return }
     var prevPSN = [UInt32](repeating: 0, count: 2)
     var targetPSN = [UInt32](repeating: 0, count: 2)
-    let prevOk = prevPSN.withUnsafeMutableBytes { raw in frontFn(raw.baseAddress!) != 0 }
+    let prevOk = prevPSN.withUnsafeMutableBytes { raw in frontFn(raw.baseAddress!) == 0 }
     if prevOk {
         let cid = connFn()
         var ownerCid: UInt32 = 0
@@ -342,16 +342,12 @@ func doDrag(_ p: Input) -> String {
 }
 
 func doScroll(_ p: Input) -> String {
-    // Scroll events use CGEventCreateScrollWheelEvent; per-pid scroll posting is
-    // unreliable across app types, so we route via HID-tap but still report method.
+    // Scroll events via SLEventPostToPid lack field-40/window-location stamping
+    // (postPerPid is mouse-click-specific), so per-pid scroll is unreliable.
+    // Honestly report hid-tap so the caller's warning path fires correctly.
     let dy = Int32(-(p.deltaY ?? 0)); let dx = Int32(p.deltaX ?? 0)
     guard let ev = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: dy, wheel2: dx, wheel3: 0)
     else { return "{\"error\":\"fail\"}" }
-    // Best-effort per-pid if we have a pid; scroll doesn't move the cursor noticeably anyway.
-    if let pid = p.pid, pid > 0, slPostToPid != nil, !isFrontmost(pid) {
-        slPostToPid?(pid, ev)
-        return "{\"ok\":true,\"method\":\"per-pid\"}"
-    }
     postHidTap(ev)
     return "{\"ok\":true,\"method\":\"hid-tap\"}"
 }
