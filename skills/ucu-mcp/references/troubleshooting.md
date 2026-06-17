@@ -1,5 +1,8 @@
 # Troubleshooting
 
+> Before taking risky UI actions (delete, send, pay, change settings), see the
+> **Confirmation Policy** in [SKILL.md](../SKILL.md#confirmation-policy).
+
 ## First Checks
 
 1. Run `doctor` — verifies Accessibility + Screen Recording permissions and
