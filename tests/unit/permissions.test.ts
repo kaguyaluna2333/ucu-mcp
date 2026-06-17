@@ -1,14 +1,20 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   checkPermissions,
   checkPermission,
   __resetPermissionCache,
 } from "../../src/safety/permissions.js";
 
-// Mock platform for testing
-vi.mock("node:os", () => ({
-  platform: () => "darwin",
-}));
+// permissions.ts checks process.platform directly (not os.platform()), so we
+// must stub process.platform to "darwin" for these tests to exercise the real
+// code paths on non-darwin CI runners (Ubuntu).
+const realPlatform = process.platform;
+beforeEach(() => {
+  Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+});
+afterEach(() => {
+  Object.defineProperty(process, "platform", { value: realPlatform, configurable: true });
+});
 
 let accessDenied = false;
 

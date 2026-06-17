@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-06-17
+
+SKILL.md Confirmation Policy + 修 permissions.test.ts CI 在 Ubuntu 全挂的 bug。
+
+### Fixed
+
+- **permissions.test.ts 在 Ubuntu CI 全挂**（4 个测试）：测试 mock 了 `node:os.platform()` 但 `permissions.ts` 用的是 `process.platform` 直接检查，mock 无效。Ubuntu 上 `checkAccessibility` 走非 darwin 分径直接 return true，osascript 从不被调用，断言失败。fix：用 `Object.defineProperty(process, "platform", ...)` stub 为 darwin。
+- 最近 3 个 commit（v0.6.0→v0.6.2）CI 都因此挂——之前本地 macOS 通过掩盖了问题。
+
+### Added
+
+- **Confirmation Policy**（SKILL.md）：参考 Codex computer-use skill，给 ucu-mcp skill 补安全确认策略节。3 级分类：always-confirm（删除/发送/支付/账户/系统设置/敏感数据）/ confirm-unless-preapproved（登录/上传/安装）/ no-confirm（读取/下载/cookie）。ucu-mcp v0.6.0+ 后台操作能力意味着 agent 能静默操作用户看不到的窗口，比前台操作更需谨慎。
+
 ## [0.6.2] - 2026-06-17
 
 修 `normalizeAppName` 名字匹配 bug + 清理死代码 + 补 TTL 测试。
