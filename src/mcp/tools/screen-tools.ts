@@ -40,71 +40,105 @@ interface BuildScreenDescriptionOpts {
  * is collected independently inside try/catch. Failures go to `errors` and set the
  * corresponding status; the function never throws. This is the text fallback for
  * environments where image content blocks are downgraded to URLs.
+ *
+ * Sources are collected concurrently because they have no data dependencies.
  */
 async function buildScreenDescription(opts: BuildScreenDescriptionOpts): Promise<ScreenDescription> {
   const platform = getPlatform();
   const errors: ScreenDescription["errors"] = [];
   const capturedAt = new Date().toISOString();
 
-  // screen — sync, almost never fails
-  let screen: ScreenSize;
-  try {
-    screen = platform.getScreenSize(opts.display);
-  } catch (e) {
-    screen = { width: 0, height: 0, scaleFactor: 1, estimated: true };
-    errors.push({ source: "screen", message: `getScreenSize failed: ${(e as Error).message}` });
-  }
+  type SourceResult<T> =
+    | { ok: true; value: T; error?: undefined }
+    | { ok: false; value?: T; error: string };
 
-  // foreground window — listApps() isFrontmost → listWindows() filter by processName + isOnScreen
-  let foregroundWindow: WindowInfo | undefined;
-  try {
-    if (platform.listApps) {
+  const collectScreen = async (): Promise<SourceResult<ScreenSize>> => {
+    try {
+      return { ok: true, value: platform.getScreenSize(opts.display) };
+    } catch (e) {
+      return { ok: false, error: `getScreenSize failed: ${(e as Error).message}` };
+    }
+  };
+
+  const collectForeground = async (): Promise<SourceResult<WindowInfo | undefined>> => {
+    try {
+      if (!platform.listApps) return { ok: true, value: undefined };
       const apps = await platform.listApps();
       const front = apps.find((a) => a.isFrontmost);
-      if (front) {
-        const wins = await platform.listWindows(true);
-        foregroundWindow = wins.find((w) => w.processName === front.name && w.isOnScreen);
-      }
+      if (!front) return { ok: true, value: undefined };
+      const wins = await platform.listWindows(true);
+      return { ok: true, value: wins.find((w) => w.processName === front.name && w.isOnScreen) };
+    } catch (e) {
+      return { ok: false, error: `foreground window resolution failed: ${(e as Error).message}` };
     }
-  } catch (e) {
-    errors.push({ source: "foreground", message: `foreground window resolution failed: ${(e as Error).message}` });
-  }
+  };
 
-  // OCR — cap blocks to ocrBlocks via slice
-  let ocr: ScreenDescription["ocr"];
-  if (opts.runOcr) {
+  const collectOcr = async (): Promise<SourceResult<ScreenDescription["ocr"]>> => {
+    if (!opts.runOcr) {
+      return { ok: true, value: { blocks: [], fullText: "", status: "skipped" } };
+    }
     try {
       const result: OcrResult = await platform.ocr(opts.display);
-      ocr = {
-        blocks: result.elements.slice(0, opts.ocrBlocks),
-        fullText: result.fullText,
-        status: "ok",
+      return {
+        ok: true,
+        value: {
+          blocks: result.elements.slice(0, opts.ocrBlocks),
+          fullText: result.fullText,
+          status: "ok",
+        },
       };
     } catch (e) {
-      ocr = { blocks: [], fullText: "", status: "failed" };
-      errors.push({ source: "ocr", message: `ocr failed: ${(e as Error).message}` });
+      return {
+        ok: false,
+        value: { blocks: [], fullText: "", status: "failed" },
+        error: `ocr failed: ${(e as Error).message}`,
+      };
     }
-  } else {
-    ocr = { blocks: [], fullText: "", status: "skipped" };
-  }
+  };
 
-  // AX — getWindowState with depth cap, password masking applied
-  let ax: ScreenDescription["ax"];
-  if (opts.includeAx) {
+  const collectAx = async (): Promise<SourceResult<ScreenDescription["ax"]>> => {
+    if (!opts.includeAx) {
+      return { ok: true, value: { status: "skipped" } };
+    }
     const effectiveWindowId = opts.windowId ?? getActiveTarget()?.windowId;
     try {
       const cappedDepth = Math.min(opts.axDepth, 10);
       const state: WindowState = await platform.getWindowState(effectiveWindowId, cappedDepth, true);
       maskSensitiveFields(state.tree);
       maskSensitiveFields(state.focusedElement);
-      ax = { elements: state.tree, status: "ok", windowId: effectiveWindowId };
+      return {
+        ok: true,
+        value: { elements: state.tree, status: "ok", windowId: effectiveWindowId },
+      };
     } catch (e) {
-      ax = { status: "failed", windowId: effectiveWindowId };
-      errors.push({ source: "ax", message: `getWindowState failed: ${(e as Error).message}` });
+      return {
+        ok: false,
+        value: { status: "failed", windowId: effectiveWindowId },
+        error: `getWindowState failed: ${(e as Error).message}`,
+      };
     }
-  } else {
-    ax = { status: "skipped" };
-  }
+  };
+
+  const [screenResult, foregroundResult, ocrResult, axResult] = await Promise.all([
+    collectScreen(),
+    collectForeground(),
+    collectOcr(),
+    collectAx(),
+  ]);
+
+  const screen = screenResult.ok
+    ? screenResult.value
+    : { width: 0, height: 0, scaleFactor: 1, estimated: true };
+  if (!screenResult.ok) errors.push({ source: "screen", message: screenResult.error });
+
+  const foregroundWindow = foregroundResult.ok ? foregroundResult.value : undefined;
+  if (!foregroundResult.ok) errors.push({ source: "foreground", message: foregroundResult.error });
+
+  const ocr = ocrResult.ok ? ocrResult.value : ocrResult.value ?? { blocks: [], fullText: "", status: "failed" };
+  if (!ocrResult.ok) errors.push({ source: "ocr", message: ocrResult.error! });
+
+  const ax = axResult.ok ? axResult.value : axResult.value ?? { status: "failed" };
+  if (!axResult.ok) errors.push({ source: "ax", message: axResult.error! });
 
   return { capturedAt, screen, foregroundWindow, ocr, ax, errors };
 }
@@ -125,7 +159,7 @@ export function registerScreenTools(registerTool: RegisterToolFn): void {
   }, async (params) => {
     if (params.windowId && params.region) throw new UnsupportedParameterError("screenshot windowId cannot be combined with region");
     const options = { format: params.format, maxWidth: params.maxWidth };
-    const buf = await withSafety<Buffer>({
+    const screenshotPromise = withSafety<Buffer>({
       action: "screenshot",
       params,
       requiresScreenRecording: true,
@@ -135,17 +169,23 @@ export function registerScreenTools(registerTool: RegisterToolFn): void {
           : Promise.reject(new UnsupportedParameterError("window screenshots are not implemented on this platform"))
         : getPlatform().screenshot(params.display, params.region, options),
     });
+
+    const describeOpts = params.describeOptions ?? { axDepth: 3, ocrBlocks: 50, includeAx: true } as const;
+    const descriptionPromise = params.describe
+      ? buildScreenDescription({
+          display: params.display,
+          runOcr: true,
+          includeAx: describeOpts.includeAx ?? true,
+          axDepth: describeOpts.axDepth ?? 3,
+          ocrBlocks: describeOpts.ocrBlocks ?? 50,
+          windowId: params.windowId,
+        })
+      : Promise.resolve(undefined);
+
+    const [buf, desc] = await Promise.all([screenshotPromise, descriptionPromise]);
+
     const content: ToolResult["content"] = [{ type: "image", data: buf.toString("base64"), mimeType: `image/${params.format}` }];
-    if (params.describe) {
-      const opts = params.describeOptions ?? { axDepth: 3, ocrBlocks: 50, includeAx: true } as const;
-      const desc = await buildScreenDescription({
-        display: params.display,
-        runOcr: true,
-        includeAx: opts.includeAx ?? true,
-        axDepth: opts.axDepth ?? 3,
-        ocrBlocks: opts.ocrBlocks ?? 50,
-        windowId: params.windowId,
-      });
+    if (desc) {
       content.push(jsonText(desc));
     }
     return { content };

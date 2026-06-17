@@ -185,33 +185,34 @@ export async function listWindows(this: MacOSPlatform, _includeMinimized?: boole
     }));
   }
 
-  if (this.windowCacheInFlight) {
-    return this.windowCache?.windows.map((w: WindowInfo) => ({ ...w, bounds: { ...w.bounds } })) ?? [];
+  if (this.windowCachePromise) {
+    return this.windowCachePromise.then((windows) =>
+      windows.map((window) => ({ ...window, bounds: { ...window.bounds } }))
+    );
   }
-  this.windowCacheInFlight = true;
 
-  try {
-    let windows: WindowInfo[];
-    const nativeResult = listWindowsNative.call(this);
-    if (nativeResult !== null) {
-      windows = nativeResult;
-    } else {
-      windows = await listWindowsJxa.call(this);
+  this.windowCachePromise = (async (): Promise<WindowInfo[]> => {
+    try {
+      const nativeResult = listWindowsNative.call(this);
+      const windows = nativeResult !== null ? nativeResult : await listWindowsJxa.call(this);
+      this.windowCache = {
+        cachedAt: Date.now(),
+        windows: windows.map((window) => ({
+          ...window,
+          bounds: { ...window.bounds },
+        })),
+      };
+      return windows;
+    } catch {
+      return [];
+    } finally {
+      this.windowCachePromise = undefined;
     }
+  })();
 
-    this.windowCache = {
-      cachedAt: Date.now(),
-      windows: windows.map((window) => ({
-        ...window,
-        bounds: { ...window.bounds },
-      })),
-    };
-    return windows;
-  } catch {
-    return [];
-  } finally {
-    this.windowCacheInFlight = false;
-  }
+  return this.windowCachePromise.then((windows) =>
+    windows.map((window) => ({ ...window, bounds: { ...window.bounds } }))
+  );
 }
 
 function listWindowsNative(this: MacOSPlatform): WindowInfo[] | null {

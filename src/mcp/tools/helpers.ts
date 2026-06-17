@@ -51,27 +51,35 @@ export async function getSafetyContext(windowId?: string): Promise<{ windowTitle
   const target = activeTargetContext;
   const effectiveWindowId = windowId ?? target?.windowId;
 
-  let windowTitle: string | undefined;
-  if (effectiveWindowId) {
-    try {
-      const windows = await getPlatform().listWindows();
-      const win = windows.find(w => w.id === effectiveWindowId);
-      windowTitle = win?.title;
-    } catch { /* best effort */ }
-  }
-  if (!windowTitle && target?.title) {
-    windowTitle = target.title;
-  }
+  // Resolve window title and browser URL concurrently; they have no dependency.
+  const [windowTitleResult, urlResult] = await Promise.all([
+    (async (): Promise<string | undefined> => {
+      if (!effectiveWindowId) return undefined;
+      try {
+        const windows = await getPlatform().listWindows();
+        const win = windows.find((w) => w.id === effectiveWindowId);
+        return win?.title;
+      } catch {
+        /* best effort */
+        return undefined;
+      }
+    })(),
+    (async (): Promise<string | undefined> => {
+      const platform = getPlatform();
+      if (!platform.getActiveBrowserContext) return undefined;
+      try {
+        const appName = target?.appName;
+        const ctx = await platform.getActiveBrowserContext(appName);
+        return ctx?.url;
+      } catch {
+        /* best effort */
+        return undefined;
+      }
+    })(),
+  ]);
 
-  let url: string | undefined;
-  const platform = getPlatform();
-  if (platform.getActiveBrowserContext) {
-    try {
-      const appName = target?.appName;
-      const ctx = await platform.getActiveBrowserContext(appName);
-      url = ctx?.url;
-    } catch { /* best effort */ }
-  }
+  const windowTitle = windowTitleResult || target?.title;
+  const url = urlResult;
 
   return { windowTitle, url };
 }

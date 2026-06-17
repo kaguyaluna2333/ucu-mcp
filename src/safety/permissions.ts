@@ -16,6 +16,39 @@ export interface PermissionDetail {
   instructions: string;
 }
 
+// Short-lived cache for individual permission checks. Permissions rarely change
+// within a single tool sequence, but we keep TTL short so that a user granting
+// permission mid-session is picked up quickly.
+const PERMISSION_CACHE_TTL_MS = { granted: 5000, denied: 1000 };
+
+interface PermissionCacheEntry {
+  granted: boolean;
+  cachedAt: number;
+}
+
+const permissionCache: Partial<Record<PermissionType, PermissionCacheEntry>> = {};
+
+/** @internal Test hook to reset the permission cache. */
+export function __resetPermissionCache(): void {
+  permissionCache.accessibility = undefined;
+  permissionCache.screenRecording = undefined;
+}
+
+function getCachedPermission(type: PermissionType): boolean | undefined {
+  const entry = permissionCache[type];
+  if (!entry) return undefined;
+  const ttl = entry.granted ? PERMISSION_CACHE_TTL_MS.granted : PERMISSION_CACHE_TTL_MS.denied;
+  if (Date.now() - entry.cachedAt > ttl) {
+    permissionCache[type] = undefined;
+    return undefined;
+  }
+  return entry.granted;
+}
+
+function setCachedPermission(type: PermissionType, granted: boolean): void {
+  permissionCache[type] = { granted, cachedAt: Date.now() };
+}
+
 /**
  * Get the name of the terminal app that the user needs to authorize.
  */
@@ -68,8 +101,8 @@ async function requestAccessibilityWithPrompt(): Promise<boolean> {
     `;
     const { stdout } = await execFileAsync("/usr/bin/osascript", [
       "-l", "JavaScript", "-e", script,
-    ], { timeout: 10000 });
-    return stdout.trim() === "true";
+    ], { timeout: 10000 } as any);
+    return (stdout as any).trim() === "true";
   } catch {
     return false;
   }
@@ -96,8 +129,8 @@ async function checkAccessibility(): Promise<boolean> {
     `;
     const { stdout } = await execFileAsync("/usr/bin/osascript", ["-e", script], {
       timeout: 5000,
-    });
-    const count = parseInt(stdout.trim(), 10);
+    } as any);
+    const count = parseInt((stdout as any).trim(), 10);
     return !isNaN(count) && count > 0;
   } catch {
     return false;
@@ -152,7 +185,11 @@ export async function checkPermission(
   const appName = getTerminalAppName();
 
   if (type === "accessibility") {
-    const granted = await checkAccessibility();
+    const cached = getCachedPermission("accessibility");
+    const granted = cached ?? await checkAccessibility();
+    if (cached === undefined) {
+      setCachedPermission("accessibility", granted);
+    }
     if (!granted) {
       // Trigger the macOS system prompt for Accessibility
       await requestAccessibilityWithPrompt();
@@ -166,7 +203,11 @@ export async function checkPermission(
     return { granted: true };
   }
 
-  const granted = await checkScreenRecording();
+  const cached = getCachedPermission("screenRecording");
+  const granted = cached ?? await checkScreenRecording();
+  if (cached === undefined) {
+    setCachedPermission("screenRecording", granted);
+  }
   if (!granted) {
     // Open System Settings for Screen Recording
     await openPermissionSettings("screenRecording");

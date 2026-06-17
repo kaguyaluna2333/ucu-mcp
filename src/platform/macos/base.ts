@@ -1,4 +1,4 @@
-import type { Platform, WindowInfo, AppTarget } from "../base.js";
+import type { Platform, WindowInfo, AppTarget, ScreenSize } from "../base.js";
 import { TargetStaleError } from "../../util/errors.js";
 import type { CachedElementDescriptor, MacOSPlatformOptions } from "./helpers.js";
 import { saveFocus, restoreFocus } from "./focus.js";
@@ -19,7 +19,9 @@ export class MacOSPlatform implements Platform {
   readonly elementCacheMaxSize = 100;
   readonly windowCacheTtlMs = 300;
   windowCache: { cachedAt: number; windows: WindowInfo[] } | undefined;
-  windowCacheInFlight = false;
+  windowCachePromise: Promise<WindowInfo[]> | undefined;
+  readonly screenSizeCacheTtlMs = 5000;
+  screenSizeCache: { display: number; cachedAt: number; size: ScreenSize } | undefined;
   activeTarget: AppTarget | undefined;
   savedFocus: { appName: string; windowTitle: string } | undefined;
 
@@ -68,6 +70,7 @@ export class MacOSPlatform implements Platform {
     // 恒有效直到模型显式 focus_app 其他应用——不查 listWindows（查了必然失配）。
     if (this.activeTarget.windowId === "tray") return;
     this.windowCache = undefined;
+    this.windowCachePromise = undefined;
     const windows = await this.listWindows(true);
     const match = windows.find(w => w.id === this.activeTarget!.windowId);
     if (!match) {
@@ -76,6 +79,11 @@ export class MacOSPlatform implements Platform {
     if (match.pid !== this.activeTarget.pid) {
       throw new TargetStaleError(this.activeTarget.windowId);
     }
+  }
+
+  /** @internal Test hook to clear the screen-size cache. */
+  __resetScreenSizeCache(): void {
+    this.screenSizeCache = undefined;
   }
 
   // ── Bound methods from domain modules ────────────────────────────────────

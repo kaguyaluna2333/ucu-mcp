@@ -30,8 +30,17 @@ export async function screenshotWindow(this: MacOSPlatform, windowId: string, op
 }
 
 export function getScreenSize(this: MacOSPlatform, display?: number): ScreenSize {
+  const idx = display ?? 0;
+  const now = Date.now();
+  if (
+    this.screenSizeCache &&
+    this.screenSizeCache.display === idx &&
+    now - this.screenSizeCache.cachedAt <= this.screenSizeCacheTtlMs
+  ) {
+    return this.screenSizeCache.size;
+  }
+
   try {
-    const idx = display ?? 0;
     const out = execFileSync("osascript", [
       "-l", "JavaScript",
       "-e",
@@ -44,7 +53,9 @@ export function getScreenSize(this: MacOSPlatform, display?: number): ScreenSize
       var scaleFactor = screen.backingScaleFactor;
       JSON.stringify({width:Math.round(frame.size.width),height:Math.round(frame.size.height),scaleFactor:scaleFactor})`,
     ], { encoding: "utf-8", timeout: 5000 }).trim();
-    return JSON.parse(out) as ScreenSize;
+    const size = JSON.parse(out) as ScreenSize;
+    this.screenSizeCache = { display: idx, cachedAt: Date.now(), size };
+    return size;
   } catch (error) {
     logger.warn("getScreenSize failed, using fallback", { error: errorMessage(error) });
     return { width: 1920, height: 1080, scaleFactor: 2, estimated: true };

@@ -1514,6 +1514,21 @@ describe("MacOSPlatform menu bar extras (tray)", () => {
     expect(script).toContain("spinMs");
   });
 
+  it("clickMenuBarExtra uses configurable AXPress spin timing", async () => {
+    execFileSyncMock.mockImplementation((cmd: string) => {
+      if (cmd === "osascript") {
+        return JSON.stringify({ items: [
+          { menuBar: 0, index: 1, name: "CC Switch", description: "", x: 44, y: 0, width: 87, height: 33, host: "self", pid: 0 },
+        ] });
+      }
+      return "";
+    });
+    const platform = new MacOSPlatform();
+    await platform.clickMenuBarExtra("cc-switch", { name: "switch" }).catch(() => {});
+    const script = lastJxaScript();
+    expect(script).toContain("spinMs(50)");
+  });
+
   it("clickElement skips AXPress for known silent-swallow apps (Tauri heuristic)", async () => {
     execFileSyncMock.mockImplementation((cmd: string) => {
       if (cmd === "osascript") return JSON.stringify({ success: true, method: "coordinate", verified: false });

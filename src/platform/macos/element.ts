@@ -5,6 +5,17 @@ import { ElementNotFoundError } from "../../util/errors.js";
 import { rethrowElementActionError } from "./helpers.js";
 import { jxaElementActionHelpers } from "../jxa-helpers.js";
 
+const DEFAULT_AXPRESS_SPIN_MS = 50;
+const MAX_AXPRESS_SPIN_MS = 80;
+
+function getAxPressSpinMs(): number {
+  const env = process.env.UCU_AXPRESS_SPIN_MS;
+  if (!env) return DEFAULT_AXPRESS_SPIN_MS;
+  const parsed = parseInt(env, 10);
+  if (isNaN(parsed)) return DEFAULT_AXPRESS_SPIN_MS;
+  return Math.max(0, Math.min(parsed, MAX_AXPRESS_SPIN_MS));
+}
+
 /**
  * App-name hints for which AXPress is known to be silently swallowed
  * (Tauri custom window decorations, some Electron controls). When the target
@@ -112,7 +123,7 @@ export async function clickElement(this: MacOSPlatform, elementId: string, app?:
         var c1 = boundsCenter(elem);
         _result = {success: true, needCoordinateClick: true, cx: c1.x, cy: c1.y};
       } else {
-        spinMs(80);
+        spinMs(${getAxPressSpinMs()});
         var sigAfter = stateSignature(elem);
         if (sigBefore !== '' && sigAfter !== sigBefore) {
           _result = {success: true, method: "axpress", verified: true};
@@ -562,7 +573,7 @@ export async function clickMenuBarExtra(this: MacOSPlatform, app: string, select
             var c1 = boundsCenter(item);
             _result = {success: true, needCoordinateClick: true, cx: c1.x, cy: c1.y};
           } else {
-            spinMs(80);
+            spinMs(${getAxPressSpinMs()});
             var sigAfter = stateSignature(item);
             if (sigBefore !== '' && sigAfter !== sigBefore) {
               _result = {success: true, method: "axpress", verified: true};
