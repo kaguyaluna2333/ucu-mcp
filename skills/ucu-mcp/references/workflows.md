@@ -6,6 +6,46 @@ unless noted.
 
 ---
 
+## 0. Common Mistakes (AVOID THESE)
+
+### ❌ Mistake 1: Clicking without focus_app → cursor jumps, foreground stolen
+```
+# WRONG — cursor will jump to (100,200) and steal foreground from the user
+click({ x: 100, y: 200 })
+
+# RIGHT — per-process posting, no cursor move
+focus_app({ app: "Safari" })
+click({ x: 100, y: 200 })    → dispatch: "per-pid" ✓
+```
+
+### ❌ Mistake 2: Using click_menu_bar_extra for normal app UI
+`click_menu_bar_extra` clicks the **macOS system menu bar** (Apple/File/Edit
+menu), NOT the app's window UI. It is ONLY for tray-only apps (cc-switch,
+Dropbox) that have no window.
+```
+# WRONG — clicks Apple menu bar, not the app's UI button
+click_menu_bar_extra({ app: "Safari" })
+
+# RIGHT — use AX or vision to click the app's actual UI
+find_element({ text: "Reload", app: "Safari" })
+click_element({ elementId })
+```
+
+### ❌ Mistake 3: Falling back to menu bar when AX returns 0
+When `find_element` returns 0 (Electron/Tauri), do NOT switch to
+`click_menu_bar_extra`. Switch to **vision** (screenshot + ocr + click).
+```
+# WRONG — find_element returns 0 → clicks Apple menu (useless)
+click_menu_bar_extra({ app: "VS Code" })
+
+# RIGHT — find_element returns 0 → OCR the screen → click at text coordinates
+screenshot({})
+ocr({})
+click({ x: block.x + block.width/2, y: block.y + block.height/2 })
+```
+
+---
+
 ## 1. Fill a form field (native app, AX-visible)
 
 ```
