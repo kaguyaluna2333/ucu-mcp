@@ -266,8 +266,8 @@ describe("CLI and MCP compatibility", () => {
       },
     });
     expect(waitForElement?.inputSchema?.properties).toMatchObject({
-      timeoutMs: { type: "number" },
-      intervalMs: { type: "number" },
+      timeoutMs: { type: "integer" },
+      intervalMs: { type: "integer" },
     });
   });
 

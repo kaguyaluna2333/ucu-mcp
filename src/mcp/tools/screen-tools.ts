@@ -79,13 +79,20 @@ async function buildScreenDescription(opts: BuildScreenDescriptionOpts): Promise
     }
     try {
       const result: OcrResult = await platform.ocr(opts.display);
+      const blocks = result.elements.slice(0, opts.ocrBlocks);
+      // Security: redact OCR blocks that look like passwords/secrets/tokens.
+      // This is best-effort (pixel-based OCR can't know field context) but
+      // catches high-entropy strings adjacent to "password"/"secret" labels.
+      for (const b of blocks) {
+        if (SENSITIVE_NAME_RE.test(b.text)) {
+          b.text = "[REDACTED]";
+        }
+      }
+      // Rebuild fullText from (possibly redacted) blocks.
+      const fullText = blocks.map((b) => b.text).join("\n");
       return {
         ok: true,
-        value: {
-          blocks: result.elements.slice(0, opts.ocrBlocks),
-          fullText: result.fullText,
-          status: "ok",
-        },
+        value: { blocks, fullText, status: "ok" },
       };
     } catch (e) {
       return {

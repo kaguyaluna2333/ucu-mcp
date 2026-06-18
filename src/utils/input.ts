@@ -425,7 +425,7 @@ export async function typeText(
   target?: InputTarget
 ): Promise<DispatchMethod | void> {
   if (isDryRun()) {
-    logDryRun("typeText", { text: text.slice(0, 50), delay });
+    logDryRun("typeText", { charCount: text.length, delay }); // don't log text content (may contain passwords)
     return;
   }
   if (!text) return;
@@ -535,6 +535,12 @@ export async function typeText(
         }
       } else {
         // Fallback: use osascript keystroke for unsupported chars (emoji, CJK, etc.)
+        // NOTE: keystroke goes to the FRONTMOST app, not the target pid. When a
+        // target is set this may type into the wrong window. Log a warning so the
+        // caller knows non-ASCII chars bypassed per-process routing.
+        if (target?.pid) {
+          logger.warn("typeText non-ASCII fallback uses global keystroke (types into frontmost, not target pid)");
+        }
         const escaped = escapeAppleScriptString(batch.chars as string);
         await execFileAsync("/usr/bin/osascript", [
           "-e", `tell application "System Events" to keystroke "${escaped}"`,

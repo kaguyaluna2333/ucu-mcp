@@ -38,10 +38,10 @@ export function registerAppTools(registerTool: RegisterToolFn): void {
   registerTool("wait_for_element", "Poll until an accessibility element matching the criteria reaches the desired state", {
     text: z.string().optional().describe("Element text"), role: z.string().optional().describe("Element role"),
     app: z.string().optional().describe("Target app"),
-    timeout: z.number().optional().describe("Timeout ms (default 5000)"),
-    timeoutMs: z.number().optional().describe("Alias for timeout"),
-    interval: z.number().optional().describe("Poll interval ms (default 500)"),
-    intervalMs: z.number().optional().describe("Alias for interval"),
+    timeout: z.number().int().min(100).max(60000).optional().describe("Timeout ms (default 5000, max 60000)"),
+    timeoutMs: z.number().int().min(100).max(60000).optional().describe("Alias for timeout"),
+    interval: z.number().int().min(250).max(10000).optional().describe("Poll interval ms (default 500, min 250)"),
+    intervalMs: z.number().int().min(250).max(10000).optional().describe("Alias for interval"),
     until: z.enum(["appear", "disappear", "value_change"]).default("appear").describe("Wait condition: 'appear' (default) waits for a match, 'disappear' waits until no match, 'value_change' waits until first match's value changes"),
   }, async (params) => {
     const deadline = Date.now() + (params.timeout ?? params.timeoutMs ?? 5000);

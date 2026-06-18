@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] - 2026-06-18
+
+Code review P2 加固（3 批次）：安全面 + 输入正确性 + 日志卫生。
+
+### Security Hardening
+
+- **OCR 密码脱敏**（screen-tools.ts）：describe_screen 的 OCR blocks 原样返回，截屏含密码字段时明文泄露。加 SENSITIVE_NAME_RE 对 OCR blocks 文本脱敏为 `[REDACTED]`，fullText 从脱敏后 blocks 重建。
+- **clipboard_write URL scheme 拦截**（guard.ts）：DEFAULT_TEXT_INJECTION_PATTERNS 补 `javascript:`/`data:`/`vbscript:` scheme + `\b(tell application)` AppleScript 注入 + `\n` 分隔命令 + deno/bun 解释器。防止剪贴板投毒（粘贴执行）。
+- **wait_for_element timeout/interval cap**（app-tools.ts）：原 schema 无 cap，恶意 timeout=2^31 + interval=1 可 fork-bomb。加 timeout max 60000 + interval min 250 的 zod 约束。
+- **logger 脱敏**（input.ts）：typeText 的 dryRun log 原记录 `text.slice(0,50)`（含密码），改为只记 `charCount`。
+
+### Input Correctness
+
+- **doubleClick/drag 加 Chromium primer**（skylight/main.swift）：提取 `primeTarget()` 共享函数（leading mouseMoved + (-1,-1) primer），doClick/doDoubleClick/doDrag 统一调用。之前 doubleClick/drag 在 Chromium/Electron 上静默失败（user-activation gate 未满足）。
+- **mouseUp pressure 改为 0**（skylight/main.swift）：真实 mouseUp 的 pressure=0，原代码所有非 move 事件都 pressure=1.0，影响绘图/3D app。改为 Up/Moved 事件 pressure=0。
+- **isFrontmost 用 NSWorkspace.frontmostApplication**（skylight/main.swift）：原 `isActive` 对 LSUIElement/agent 进程（如 SystemUIServer）不可靠，改用 `NSWorkspace.shared.frontmostApplication?.processIdentifier == pid` 做明确判定。
+- **非 ASCII typeText fallback 警告**（input.ts）：非 ASCII 字符走 osascript keystroke（发到前台而非 target pid），当有 target 时 logger.warn 提醒。
+
+### Tests
+
+- 328 passed（wait_for_element schema type 从 number→integer，cli-mcp 测试同步）。
+
 ## [0.6.4] - 2026-06-18
 
 4 个独立子 Agent 全面 code review 后的修复（skylight/element/tests/security）。

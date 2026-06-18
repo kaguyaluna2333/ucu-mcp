@@ -97,9 +97,15 @@ const DEFAULT_TEXT_INJECTION_PATTERNS: Array<{ pattern: RegExp; reason: string }
   { pattern: /\$\s*\(/, reason: "shell command substitution" },
   { pattern: /`[^`]+`/, reason: "shell backtick substitution" },
   { pattern: /&&|\|\|/, reason: "shell command chaining" },
-  { pattern: /\|\s*(sh|bash|zsh|python|ruby|perl|node)\b/i, reason: "piping into an interpreter" },
+  { pattern: /\|\s*(sh|bash|zsh|python|ruby|perl|node|deno|bun)\b/i, reason: "piping into an interpreter" },
   { pattern: /\b(sudo\s+rm|rm\s+-rf|mkfs|diskutil\s+erase|dd\s+if=|chmod\s+-R\s+777)\b/i, reason: "dangerous shell command" },
   { pattern: /\b(ObjC\.import|Application\s*\(|do\s+shell\s+script)\b/, reason: "AppleScript/JXA injection primitive" },
+  { pattern: /\b(tell\s+(application|app)\s+)/i, reason: "AppleScript tell injection" },
+  // URL schemes dangerous when pasted into browser address bars or rich-text fields
+  { pattern: /^\s*(javascript|data|vbscript)\s*:/i, reason: "dangerous URL scheme (code execution when pasted)" },
+  { pattern: /\b(javascript|data)\s*:\s*(text\/html|application\/)/i, reason: "dangerous URL scheme with MIME type" },
+  // Newline-followed-by-command (bypasses && / || chaining detection)
+  { pattern: /\n\s*(rm\s|sudo\s|curl\s|wget\s|bash\s|sh\s|osascript\s)/i, reason: "newline-separated shell command" },
 ];
 
 // ---------------------------------------------------------------------------

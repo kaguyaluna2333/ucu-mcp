@@ -119,10 +119,12 @@ func makeMouseEvent(_ type: CGEventType, at point: CGPoint, button: CGMouseButto
     case .mouseMoved: nsType = .mouseMoved
     default: return nil
     }
+    // pressure: 0 for mouseUp/mouseMoved, 1.0 for mouseDown/drag (real hardware behavior)
+    let isRelease = nsType == .leftMouseUp || nsType == .rightMouseUp || nsType == .otherMouseUp || nsType == .mouseMoved
     guard let ns = NSEvent.mouseEvent(
         with: nsType, location: point, modifierFlags: [],
         timestamp: 0, windowNumber: windowNumber, context: nil,
-        eventNumber: 0, clickCount: clickCount, pressure: (type == .mouseMoved) ? 0 : 1.0
+        eventNumber: 0, clickCount: clickCount, pressure: isRelease ? 0 : 1.0
     ), let cg = ns.cgEvent else { return nil }
     return cg
 }
@@ -139,6 +141,12 @@ func postPerPid(_ event: CGEvent, pid: Int32, at point: CGPoint, windowNumber: I
         event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(windowNumber))
     }
     // Private SPIs: window-local point + Chromium pid latch (field 40).
+    // NOTE: setWindowLoc expects window-LOCAL coordinates, but we pass the screen-global
+    // point. For AppKit apps this is correct (AppKit hit-tests use NSEvent.location which
+    // is global/flipped). For Chromium's internal windowLocation field this may be offset
+    // by the window origin — but field-40 (pid latch) is sufficient for Chromium to accept
+    // the event in practice. Full window-origin subtraction would require threading bounds
+    // through the Input struct (future improvement).
     setWindowLoc?(event, point)
     setIntField?(event, 40, Int64(pid))
     event.timestamp = clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
@@ -152,9 +160,11 @@ func postHidTap(_ event: CGEvent) {
 }
 
 /// True if the target pid is the frontmost app (canvas/GPU apps filter per-pid
-/// routes — must use HID-tap there).
+/// routes — must use HID-tap there). Uses NSWorkspace.frontmostApplication for
+/// an unambiguous "is this pid frontmost right now" check (isActive is unreliable
+/// for LSUIElement/agent processes like SystemUIServer).
 func isFrontmost(_ pid: Int32) -> Bool {
-    return NSRunningApplication(processIdentifier: pid)?.isActive == true
+    return NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
 }
 
 // MARK: - Focus-without-raise (SLPSPostEventRecordTo)
@@ -188,6 +198,24 @@ func focusWithoutRaise(pid: Int32, windowID: Int) {
     // Focus target.
     buf[0x8A] = 0x01
     _ = targetPSN.withUnsafeBytes { psnRaw in buf.withUnsafeBufferPointer { bp in postRec(psnRaw.baseAddress!, bp.baseAddress!) } }
+}
+
+/// Chromium user-activation primer: leading mouseMoved + off-screen click at (-1,-1).
+/// Required before any real mouse event on Chromium/Electron targets, otherwise
+/// the renderer's user-activation gate filters the event silently.
+/// Called by doClick, doDoubleClick, doDrag before their target events.
+func primeTarget(pid: Int32, at loc: CGPoint, button: CGMouseButton, windowNumber winNum: Int) {
+    // Leading mouseMoved at target (cursor-state primer).
+    if let mv = makeMouseEvent(.mouseMoved, at: loc, button: button, windowNumber: winNum) {
+        postPerPid(mv, pid: pid, at: loc, windowNumber: winNum, button: button); usleep(15_000)
+    }
+    // Off-screen primer click @ (-1,-1) — satisfies Chromium user-activation gate.
+    let off = CGPoint(x: -1, y: -1)
+    if let pd = makeMouseEvent(.leftMouseDown, at: off, button: .left, windowNumber: winNum),
+       let pu = makeMouseEvent(.leftMouseUp, at: off, button: .left, windowNumber: winNum) {
+        postPerPid(pd, pid: pid, at: off, windowNumber: winNum); usleep(1_000)
+        postPerPid(pu, pid: pid, at: off, windowNumber: winNum); usleep(100_000)
+    }
 }
 
 // MARK: - AX keepalive (root-cause fix for Electron/Tauri AXPress silent failure)
@@ -234,17 +262,7 @@ func doClick(_ p: Input) -> String {
         return "{\"ok\":true,\"method\":\"hid-tap\"}"
     }
     focusWithoutRaise(pid: pid, windowID: winNum)
-    // Leading mouseMoved at target (cursor-state primer).
-    if let mv = makeMouseEvent(.mouseMoved, at: loc, button: b, windowNumber: winNum) {
-        postPerPid(mv, pid: pid, at: loc, windowNumber: winNum, button: b); usleep(15_000)
-    }
-    // Off-screen primer click @ (-1,-1) — satisfies Chromium user-activation gate.
-    let off = CGPoint(x: -1, y: -1)
-    if let pd = makeMouseEvent(.leftMouseDown, at: off, button: .left, windowNumber: winNum),
-       let pu = makeMouseEvent(.leftMouseUp, at: off, button: .left, windowNumber: winNum) {
-        postPerPid(pd, pid: pid, at: off, windowNumber: winNum); usleep(1_000)
-        postPerPid(pu, pid: pid, at: off, windowNumber: winNum); usleep(100_000)
-    }
+    primeTarget(pid: pid, at: loc, button: b, windowNumber: winNum)
     // Target click.
     guard let dn = makeMouseEvent(downT(b), at: loc, button: b, windowNumber: winNum),
           let up = makeMouseEvent(upT(b), at: loc, button: b, windowNumber: winNum)
@@ -263,6 +281,7 @@ func doDoubleClick(_ p: Input) -> String {
         return hidTapDouble(loc: loc, b: b)
     }
     focusWithoutRaise(pid: pid, windowID: winNum)
+    primeTarget(pid: pid, at: loc, button: b, windowNumber: winNum)
     for state in [1, 2] {
         guard let dn = makeMouseEvent(downT(b), at: loc, button: b, clickCount: state, windowNumber: winNum),
               let up = makeMouseEvent(upT(b), at: loc, button: b, clickCount: state, windowNumber: winNum)
@@ -324,6 +343,7 @@ func doDrag(_ p: Input) -> String {
         return "{\"ok\":true,\"method\":\"hid-tap\"}"
     }
     focusWithoutRaise(pid: pid, windowID: winNum)
+    primeTarget(pid: pid, at: from, button: b, windowNumber: winNum)
     guard let dn = makeMouseEvent(downT(b), at: from, button: b, windowNumber: winNum)
     else { return "{\"error\":\"fail\"}" }
     postPerPid(dn, pid: pid, at: from, windowNumber: winNum, button: b)
