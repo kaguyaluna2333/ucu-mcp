@@ -509,11 +509,15 @@ export async function typeText(
     flushCG();
     flushFallback();
 
-    // Process each batch
+    // Process each batch — track the dispatch method used (worst-case wins: hid-tap > per-pid).
+    let lastDispatch: DispatchMethod | undefined;
     for (const batch of batches) {
       if (batch.cgEvent && Array.isArray(batch.chars)) {
         if (isCgeventAvailable() || isSkylightAvailable()) {
-          runInputChecked({ command: "typeBatch", keys: batch.chars }, target);
+          const d = runInputChecked({ command: "typeBatch", keys: batch.chars }, target);
+          // If any batch went hid-tap, the overall result is hid-tap.
+          if (d === "hid-tap") lastDispatch = "hid-tap";
+          else if (lastDispatch !== "hid-tap") lastDispatch = d;
         } else {
           // Build a single JXA script that types all chars in this CGEvent batch
           const keyStatements = (batch.chars as Array<{ code: number; shift: boolean }>).map(({ code, shift }) => {
@@ -547,7 +551,7 @@ export async function typeText(
         ], { timeout: 5000 });
       }
     }
-    return;
+    return lastDispatch;
   }
 
   if (_platform === "linux") {
