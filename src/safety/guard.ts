@@ -34,15 +34,18 @@ export interface SafetyGuardConfig {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_BLOCKED_KEYS: string[] = [
-  // macOS – app-level
-  "cmd+q",
-  "cmd+shift+q",    // log out（方向2 后字母 q 可解析，须显式拦截）
-  "cmd+option+q",   // log out variant
-  "cmd+w",
-  "cmd+l",          // lock screen
+  // macOS – truly irreversible app/system actions
+  "cmd+q",           // quit app (data loss risk)
+  "cmd+shift+q",     // log out（方向2 后字母 q 可解析，须显式拦截）
+  "cmd+option+q",    // log out variant
+  // NOTE: cmd+l (lock screen / browser address bar) and cmd+w (close tab) were
+  // previously blocked, but they are essential for browser automation (cmd+l =
+  // focus address bar, cmd+w = close tab). Lock screen on modern macOS is
+  // ctrl+cmd+q, not cmd+l. Removed from blocklist v0.6.7.
   // macOS – system-level
-  "cmd+option+esc", // Force-quit dialog
-  "cmd+ctrl+power", // force restart
+  "cmd+option+esc",  // Force-quit dialog
+  "cmd+ctrl+power",  // force restart
+  "ctrl+cmd+q",      // lock screen (modern macOS)
   "cmd+option+power", // sleep
   // Windows / Linux
   "alt+f4",

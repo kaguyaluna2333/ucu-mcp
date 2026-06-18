@@ -19,9 +19,21 @@ describe("SafetyGuard", () => {
     expect(result.allowed).toBe(true);
   });
 
-  it("should block cmd+l (lock screen) key combination", () => {
+  it("should allow cmd+l (browser address bar focus — no longer blocked since v0.6.7)", () => {
     const guard = new SafetyGuard();
     const result = guard.checkAction("key", { keys: ["cmd", "l"] });
+    expect(result.allowed).toBe(true);
+  });
+
+  it("should allow cmd+w (close tab — no longer blocked since v0.6.7)", () => {
+    const guard = new SafetyGuard();
+    const result = guard.checkAction("key", { keys: ["cmd", "w"] });
+    expect(result.allowed).toBe(true);
+  });
+
+  it("should block ctrl+cmd+q (modern macOS lock screen)", () => {
+    const guard = new SafetyGuard();
+    const result = guard.checkAction("key", { keys: ["ctrl", "cmd", "q"] });
     expect(result.allowed).toBe(false);
   });
 

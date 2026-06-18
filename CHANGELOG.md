@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] - 2026-06-18
+
+Claude Code 实机测试暴露的致命 bug：Chromium/Electron app 操控完全失败。
+
+### P0 Fixed — Chromium/Electron app 操控失败根因
+
+- **windowlist-helper 只返回当前屏幕可见窗口**（windowlist/main.swift）：`.optionOnScreenOnly` 导致其他 Space / 最小化 / 被遮挡的窗口不可见。Microsoft Edge（14 个窗口）完全不在列表里 → `focus_app("Microsoft Edge")` 找不到窗口 → 退到 tray fallback → 返回 `windowId:"tray"` → 所有后续操作发到错误 pid。**修复**：改为 `[.optionAll, .excludeDesktopElements]`（80 个窗口全可见），TS 层用 `isOnScreen` 过滤。
+- **selectWindowForApp 多窗口选择缺陷**（helpers.ts）：Chromium app 暴露多个 compositor 子窗口，`find` 第一个可能不是主浏览器窗口。**修复**：改为评分排序（isOnScreen +1000, has title +500, 最大面积），优先选可见有标题的大窗口。
+
+### P0 Fixed — 浏览器操作必要快捷键被屏蔽
+
+- **cmd+l 从 blocklist 移除**（guard.ts）：cmd+l = 浏览器聚焦地址栏（必要操作），不是锁屏（现代 macOS 用 ctrl+cmd+q）。屏蔽它让浏览器自动化完全不可能。
+- **cmd+w 从 blocklist 移除**（guard.ts）：cmd+w = 关闭标签页（常用操作）。
+- 新增 `ctrl+cmd+q`（现代 macOS 锁屏）到 blocklist。
+
+### 根因分析
+
+Claude Code 报告的 5 个连锁失败全部源于同一根因——windowlist 看不到 Edge 窗口：
+1. focus_app 返回 tray → pid 错误（tray helper 而非浏览器进程）
+2. press_key 到错误 pid → 假装成功
+3. type_text 无 target → 强制 HID → 打到前台终端
+4. find_element 返回空 → AX 树不可见（Chromium 正常，但 windowlist 问题是额外障碍）
+5. 截图只显示前台 app → 无法验证操作效果
+
+修复 1（windowlist .optionAll）解决了 1/2/3/5；修复 2（cmd+l/w）解决了 4 的连锁影响。
+
+### Tests
+
+- 330 passed（+2：cmd+l/cmd+w allow + ctrl+cmd+q block）。
+
+## [0.6.6] - 2026-06-18
+
+Skill 重写修复抢前台 + 菜单栏误用。
+
 ## [0.6.5] - 2026-06-18
 
 Code review P2 加固（3 批次）：安全面 + 输入正确性 + 日志卫生。

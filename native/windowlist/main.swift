@@ -28,7 +28,10 @@ struct Output: Encodable {
     let error: String?
 }
 
-let options: CGWindowListOption = .optionOnScreenOnly
+// .optionAll includes windows on all Spaces + minimized windows. We filter by
+// isOnScreen in the TS layer. Using .optionOnScreenOnly would miss windows on
+// other Spaces or minimized ones, causing focus_app to fail for any background app.
+let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
 guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
     let out = Output(windows: [], error: "CGWindowListCopyWindowInfo returned nil")
     FileHandle.standardOutput.write(try! JSONEncoder().encode(out))

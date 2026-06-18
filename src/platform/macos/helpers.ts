@@ -60,8 +60,18 @@ export function appNameMatches(processName: string, requestedApp: string): boole
 
 export function selectWindowForApp(windows: import("../base.js").WindowInfo[], requestedApp: string): import("../base.js").WindowInfo | undefined {
   const requested = normalizeAppName(requestedApp);
-  return windows.find((window) => normalizeAppName(window.processName) === requested) ??
-    windows.find((window) => appNameMatches(window.processName, requestedApp));
+  const matched = windows.filter((window) => normalizeAppName(window.processName) === requested);
+  const pool = matched.length > 0 ? matched : windows.filter((window) => appNameMatches(window.processName, requestedApp));
+  if (pool.length === 0) return undefined;
+  if (pool.length === 1) return pool[0];
+  // Multiple windows for the same app (common for Chromium/Electron which expose
+  // many compositor sub-windows). Prefer: onScreen → has title → largest area.
+  const scored = pool.map((w) => ({
+    w,
+    score: (w.isOnScreen ? 1000 : 0) + (w.title ? 500 : 0) + (w.bounds.width * w.bounds.height),
+  }));
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0].w;
 }
 
 export interface MacOSPlatformOptions {
