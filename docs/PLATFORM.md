@@ -135,92 +135,18 @@ Delegated to `src/utils/input.ts` which creates `MouseAction` and `KeyboardActio
 
 ---
 
-## Windows Implementation (`windows.ts`)
-
-**Status: Stub.** The `WindowsPlatform` class exists and implements the `Platform` interface, but every method throws `"Not implemented"` or returns placeholder data.
-
-### Current State
-
-- `getScreenSize` returns a hardcoded `{ width: 1920, height: 1080 }`.
-- `getCursorPosition` returns `{ x: 0, y: 0 }`.
-- All other methods throw `Error("Not implemented: Windows <method>")`.
-
-### Planned Approach
-
-The utility modules (`screenshot.ts`, `input.ts`) already contain Windows code paths using PowerShell, which provides a starting point:
-
-- **Screenshots** -- `System.Drawing.Graphics.CopyFromScreen` via PowerShell. The `captureFullScreen`, `captureRegion`, and `captureWindow` functions already have working PowerShell implementations that create a `Bitmap`, call `CopyFromScreen`, and save to a temp file.
-- **Mouse input** -- `user32.dll` P/Invoke via PowerShell: `SetCursorPos` for move, `mouse_event` flags (`0x0002`/`0x0004` for left down/up, `0x0008`/`0x0010` for right down/up, `0x0800` for wheel) for click, double-click, right-click, scroll, and drag.
-- **Keyboard input** -- `System.Windows.Forms.SendKeys` via PowerShell. Modifier encoding: `^` = Ctrl, `%` = Alt, `+` = Shift. Key names mapped via `SENDKEYS_MAP`.
-- **Window listing** -- `EnumWindows` + `GetWindowText` via `ffi-napi` or `edge-js` for native Win32 API calls.
-- **Window state / accessibility tree** -- UI Automation API (COM-based), accessible via PowerShell or a Node native addon.
-
-### Dependencies to Add
-
-- `ffi-napi` or `edge-js` for calling Win32 APIs from Node.js.
-- PowerShell 5.1+ (pre-installed on Windows 10/11).
-
----
-
-## Linux Implementation (`linux.ts`)
-
-**Status: Stub.** The `LinuxPlatform` class exists with method signatures and TODO comments, but every method throws `"Linux adapter not yet implemented"`.
-
-### Current State
-
-- `listWindows` returns an empty array (does not throw).
-- All other methods throw `Error("Linux adapter not yet implemented")`.
-
-### Planned Approach
-
-The utility modules already contain Linux code paths:
-
-- **Screenshots** -- `scrot` for full-screen capture, `import` (ImageMagick) for region capture, `xwd` + `convert` for window capture.
-- **Mouse input** -- `xdotool`: `mousemove`, `click` (button 1/2/3), `mousedown`/`mouseup`/`mousemove` for drag, buttons 4/5 for scroll.
-- **Keyboard input** -- `xdotool type` for text, `xdotool key` for key presses and combos (e.g. `ctrl+c`, `super+l`). Key names mapped via `XDOTOOL_KEY_MAP`.
-- **Window listing** -- `wmctrl -l` or `xdotool search` to enumerate windows.
-- **Window state / accessibility tree** -- AT-SPI2 via D-Bus. This is the Linux accessibility standard (used by Orca, GNOME accessibility). Requires D-Bus bindings for Node.js.
-
-### X11 vs Wayland
-
-The current utility code targets X11 tools (`xdotool`, `scrot`, `import`, `xwd`). Wayland requires different tooling:
-
-- **Screenshots** -- `grim` (Wayland screenshot tool) instead of `scrot`.
-- **Input** -- `ydotool` (works on both X11 and Wayland via uinput) instead of `xdotool`.
-- **Window management** -- `wlr-randr` for screen info, `swaymsg` for Sway/i3 window listing.
-
-A production Linux adapter should detect the display server and dispatch accordingly.
-
-### Dependencies to Add
-
-- `xdotool` (X11) or `ydotool` (Wayland) for input synthesis.
-- `scrot` (X11) or `grim` (Wayland) for screenshots.
-- `wmctrl` for window listing.
-- AT-SPI2 D-Bus bindings for accessibility tree access.
-
----
-
 ## Platform Detection and Auto-Selection
 
-Platform selection happens in `src/mcp/tools.ts` via a singleton factory:
+Platform selection happens in `src/mcp/tools/helpers.ts` via a singleton factory. Only macOS has a concrete adapter; any other platform resolves to `undefined`, so the first method call throws a `TypeError` rather than silently degrading to a stub:
 
 ```typescript
 let _platform: Platform | undefined;
 
-function getPlatform(): Platform {
-  if (_platform) return _platform;
-  switch (process.platform) {
-    case "darwin":
-      _platform = new MacOSPlatform();
-      break;
-    case "win32":
-      _platform = new WindowsPlatform();
-      break;
-    case "linux":
-      _platform = new LinuxPlatform();
-      break;
-    default:
-      throw new PlatformError(`Unsupported platform: ${process.platform}`);
+export function getPlatform(): Platform {
+  // ponytail: darwin-only — non-macOS resolves to `undefined as never` and
+  // throws a TypeError on first use instead of falling back to a stub adapter.
+  if (!_platform) {
+    _platform = process.platform === "darwin" ? new MacOSPlatform() : (undefined as never);
   }
   return _platform;
 }

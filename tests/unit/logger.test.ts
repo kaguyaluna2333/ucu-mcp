@@ -82,36 +82,6 @@ describe("logger", () => {
     expect(JSON.parse(errorSpy.mock.calls[0][0] as string).level).toBe("error");
   });
 
-  it("withCorrelationId adds correlationId to all subsequent entries", async () => {
-    delete process.env.UCU_LOG_LEVEL;
-    vi.resetModules();
-    const { createLogger } = await import("../../src/util/logger.js");
-    const log = createLogger("corr").withCorrelationId("req-abc");
-    log.info("first");
-    log.error("second");
-
-    expect(errorSpy).toHaveBeenCalledTimes(2);
-    for (const call of errorSpy.mock.calls) {
-      const entry = JSON.parse(call[0] as string);
-      expect(entry.correlationId).toBe("req-abc");
-    }
-  });
-
-  it("parent logger is not mutated by withCorrelationId", async () => {
-    delete process.env.UCU_LOG_LEVEL;
-    vi.resetModules();
-    const { createLogger } = await import("../../src/util/logger.js");
-    const parent = createLogger("parent");
-    const child = parent.withCorrelationId("x");
-    child.info("child");
-    parent.info("parent");
-
-    const childEntry = JSON.parse(errorSpy.mock.calls[0][0] as string);
-    const parentEntry = JSON.parse(errorSpy.mock.calls[1][0] as string);
-    expect(childEntry.correlationId).toBe("x");
-    expect(parentEntry.correlationId).toBeUndefined();
-  });
-
   it("falls back to info when UCU_LOG_LEVEL is invalid", async () => {
     process.env.UCU_LOG_LEVEL = "bogus";
     vi.resetModules();

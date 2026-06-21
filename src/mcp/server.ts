@@ -1,8 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createStdioTransport } from "./transport.js";
 import { registerTools, startUserActivityMonitor } from "./tools/index.js";
 
 const UCU_MCP_INSTRUCTIONS = `
@@ -47,7 +47,7 @@ export async function startServer(): Promise<void> {
   registerTools(server);
   startUserActivityMonitor();
 
-  const transport = createStdioTransport();
+  const transport = new StdioServerTransport();
   await server.connect(transport);
 
   console.error("ucu-mcp server started on stdio");

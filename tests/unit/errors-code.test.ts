@@ -7,7 +7,6 @@ import {
   WindowNotFoundError,
   TargetStaleError,
   ElementNotFoundError,
-  CoordinateError,
   InputSynthesisError,
   UnsupportedParameterError,
   CaptureError,
@@ -63,13 +62,11 @@ describe("subclass codes (defaults and overrides)", () => {
 
   for (const [Ctor, expectedCode, msg] of cases) {
     it(`${Ctor.name} defaults to ${expectedCode}`, () => {
-      // PermissionError and CoordinateError have different constructor signatures
+      // PermissionError has a different constructor signature
       const err =
         Ctor === PermissionError
           ? new (Ctor as any)("accessibility", "darwin")
-          : Ctor === CoordinateError
-            ? new (Ctor as any)(1, 2, { width: 100, height: 100 })
-            : new (Ctor as any)(msg);
+          : new (Ctor as any)(msg);
       expect(err.code).toBe(expectedCode);
     });
 
@@ -81,11 +78,6 @@ describe("subclass codes (defaults and overrides)", () => {
   it("PermissionError defaults to PERMISSION_DENIED", () => {
     const err = new PermissionError("accessibility", "darwin");
     expect(err.code).toBe("PERMISSION_DENIED");
-  });
-
-  it("CoordinateError defaults to COORDINATE_OUT_OF_BOUNDS", () => {
-    const err = new CoordinateError(100, 100, { width: 50, height: 50 });
-    expect(err.code).toBe("COORDINATE_OUT_OF_BOUNDS");
   });
 });
 

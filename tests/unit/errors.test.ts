@@ -6,7 +6,6 @@ import {
   PermissionError,
   WindowNotFoundError,
   ElementNotFoundError,
-  CoordinateError,
   InputSynthesisError,
   UnsupportedParameterError,
   CaptureError,
@@ -101,18 +100,6 @@ describe("ElementNotFoundError", () => {
     expect(err.retryable).toBe(false);
     expect(err.message).toContain("Notes/win0/1");
     expect(err.message).toContain("find_element");
-  });
-});
-
-describe("CoordinateError", () => {
-  it("uses COORDINATE_OUT_OF_BOUNDS code and renders bounds", () => {
-    const err = new CoordinateError(999, 888, { width: 800, height: 600 });
-    expect(err.code).toBe("COORDINATE_OUT_OF_BOUNDS");
-    expect(err.retryable).toBe(false);
-    expect(err.message).toContain("999");
-    expect(err.message).toContain("888");
-    expect(err.message).toContain("800");
-    expect(err.message).toContain("600");
   });
 });
 

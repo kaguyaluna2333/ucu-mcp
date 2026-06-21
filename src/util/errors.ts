@@ -149,20 +149,6 @@ export class ElementNotFoundError extends UcuError {
 // ---------------------------------------------------------------------------
 
 /**
- * Click/scroll target is outside screen bounds.
- */
-export class CoordinateError extends UcuError {
-  static override readonly defaultCode = "COORDINATE_OUT_OF_BOUNDS";
-  constructor(x: number, y: number, bounds: { width: number; height: number }) {
-    super(
-      `Coordinate (${x}, ${y}) is outside screen bounds (0-${bounds.width}, 0-${bounds.height}).`,
-      CoordinateError.defaultCode,
-      false,
-    );
-  }
-}
-
-/**
  * Keystroke or mouse event injection failed.
  */
 export class InputSynthesisError extends UcuError {

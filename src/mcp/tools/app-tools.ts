@@ -2,7 +2,6 @@ import { z } from "zod";
 import type { AppTarget } from "../../platform/base.js";
 import { checkPermission } from "../../safety/permissions.js";
 import { PermissionError } from "../../util/errors.js";
-import { createLogger } from "../../util/logger.js";
 import { metrics } from "../../util/metrics.js";
 import {
   type RegisterToolFn,
@@ -13,8 +12,6 @@ import {
   withSafety,
   jsonText,
 } from "./helpers.js";
-
-const log = createLogger("tools");
 
 export function registerAppTools(registerTool: RegisterToolFn): void {
   registerTool("list_apps", "List all running applications", {}, async () => {

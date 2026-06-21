@@ -494,9 +494,7 @@ src/
 │
 ├── platform/               # Platform abstraction layer
 │   ├── base.ts             # Platform interface
-│   ├── macos.ts            # macOS (AX API)
-│   ├── windows.ts          # Windows (UIA)
-│   └── linux.ts            # Linux (AT-SPI2)
+│   └── macos.ts            # macOS (AX API)
 │
 ├── safety/                 # Safety subsystem
 │   ├── guard.ts            # Safety guard (rule pipeline)

@@ -18,14 +18,14 @@ describe("retry", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it("retries up to maxRetries on retryable UcuError and eventually resolves", async () => {
+  it("retries on retryable UcuError and eventually resolves", async () => {
     const fn = vi
       .fn()
       .mockRejectedValueOnce(new PlatformError("transient"))
       .mockRejectedValueOnce(new PlatformError("transient"))
       .mockResolvedValue("ok");
 
-    const promise = retry(fn, { maxRetries: 3, baseDelay: 10 });
+    const promise = retry(fn);
     // Drain microtasks + timers until promise resolves
     await vi.runAllTimersAsync();
     await expect(promise).resolves.toBe("ok");
@@ -36,19 +36,19 @@ describe("retry", () => {
     const err = new PlatformError("always fails");
     const fn = vi.fn().mockRejectedValue(err);
 
-    const promise = retry(fn, { maxRetries: 2, baseDelay: 10 });
+    const promise = retry(fn);
     promise.catch(() => undefined); // silence unhandled rejection warning
     await vi.runAllTimersAsync();
     await expect(promise).rejects.toBe(err);
-    // 1 initial + 2 retries = 3 total attempts
-    expect(fn).toHaveBeenCalledTimes(3);
+    // 1 initial + 3 retries (MAX_RETRIES) = 4 total attempts
+    expect(fn).toHaveBeenCalledTimes(4);
   });
 
   it("does not retry non-retryable UcuError (e.g. SafetyError)", async () => {
     const err = new SafetyError("blocked");
     const fn = vi.fn().mockRejectedValue(err);
 
-    const promise = retry(fn, { maxRetries: 5, baseDelay: 10 });
+    const promise = retry(fn);
     promise.catch(() => undefined);
     await vi.runAllTimersAsync();
     await expect(promise).rejects.toBe(err);
@@ -59,27 +59,14 @@ describe("retry", () => {
     const err = new Error("random");
     const fn = vi.fn().mockRejectedValue(err);
 
-    const promise = retry(fn, { maxRetries: 5, baseDelay: 10 });
+    const promise = retry(fn);
     promise.catch(() => undefined);
     await vi.runAllTimersAsync();
     await expect(promise).rejects.toBe(err);
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it("respects custom shouldRetry predicate", async () => {
-    const err = new Error("custom");
-    const fn = vi.fn().mockRejectedValue(err);
-    const shouldRetry = vi.fn().mockReturnValue(true);
-
-    const promise = retry(fn, { maxRetries: 1, baseDelay: 10, shouldRetry });
-    promise.catch(() => undefined);
-    await vi.runAllTimersAsync();
-    await expect(promise).rejects.toBe(err);
-    expect(fn).toHaveBeenCalledTimes(2);
-    expect(shouldRetry).toHaveBeenCalledWith(err);
-  });
-
-  it("caps delay at maxDelay (exponential backoff)", async () => {
+  it("uses exponential backoff capped at 5000ms (delays 100, 200, 400)", async () => {
     const fn = vi
       .fn()
       .mockRejectedValueOnce(new PlatformError("a"))
@@ -88,16 +75,16 @@ describe("retry", () => {
       .mockResolvedValue("ok");
 
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
-    const promise = retry(fn, { maxRetries: 3, baseDelay: 100, maxDelay: 250 });
+    const promise = retry(fn);
     await vi.runAllTimersAsync();
     await expect(promise).resolves.toBe("ok");
 
-    // Inspect the delays used. With baseDelay=100, maxDelay=250:
+    // Default backoff: BASE_DELAY=100 doubling each attempt, capped at MAX_DELAY=5000.
     //   attempt 0 fail -> wait 100
     //   attempt 1 fail -> wait 200
-    //   attempt 2 fail -> wait 250 (capped from 400)
+    //   attempt 2 fail -> wait 400
     const delays = setTimeoutSpy.mock.calls.map(([, ms]) => ms as number);
-    expect(delays).toEqual([100, 200, 250]);
+    expect(delays).toEqual([100, 200, 400]);
     setTimeoutSpy.mockRestore();
   });
 
@@ -105,7 +92,7 @@ describe("retry", () => {
     const err = new UcuError("x", "X", true);
     const fn = vi.fn().mockRejectedValueOnce(err).mockResolvedValue("ok");
 
-    const promise = retry(fn, { maxRetries: 2, baseDelay: 10 });
+    const promise = retry(fn);
     await vi.runAllTimersAsync();
     await expect(promise).resolves.toBe("ok");
     expect(fn).toHaveBeenCalledTimes(2);
