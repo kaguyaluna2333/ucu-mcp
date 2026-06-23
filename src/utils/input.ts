@@ -3,7 +3,7 @@
 // rather than refactored — removal touches every function signature + callers +
 // tests. Delete when a real cross-platform Platform adapter lands.
 /**
- * Cross-platform input synthesis for UCU-MCP.
+ * macOS input synthesis for UCU-MCP (CGEvent-based, background injection).
  *
  * macOS: Uses CGEvent API exclusively for BACKGROUND input injection.
  * This does NOT activate windows or steal focus — the AI agent can

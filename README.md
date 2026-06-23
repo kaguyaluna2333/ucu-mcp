@@ -1,15 +1,17 @@
 # ucu-mcp
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Universal Computer Use MCP — desktop automation for any AI agent.
 
 ## Overview
 
-UCU-MCP (Universal Computer Use MCP) is a Model Context Protocol server that gives AI agents cross-platform desktop automation capabilities. Its macOS path favors non-invasive observation and input where the OS allows it: coordinate mouse events preserve the physical cursor, `set_value` writes AX values directly, and focused keyboard typing is explicit.
+UCU-MCP (Universal Computer Use MCP) is a Model Context Protocol server that gives AI agents desktop automation capabilities on macOS. It favors non-invasive observation and input where the OS allows it: coordinate mouse events preserve the physical cursor, `set_value` writes AX values directly, and focused keyboard typing is explicit.
 
 ## Features
 
 - **Universal**: Works with Claude Code, OpenCode, Codex, Gemini CLI, and any MCP client
-- **Cross-platform architecture**: macOS is the active implementation; Windows and Linux adapters fail explicitly until their native backends are completed
+- **macOS-native**: a complete macOS implementation today (Accessibility, ScreenCaptureKit, SkyLight). Windows and Linux are on the roadmap — their adapters fail explicitly until native backends land
 - **Non-invasive where possible**: Coordinate mouse events preserve cursor position; `set_value` avoids focusing AX elements; tools that require current focus say so explicitly
 - **Codex-inspired**: AX element refetch, MCP instructions, lock-screen guard, URL blocklist, and runtime doctor checks
 - **Safe**: Built-in permission checks and dangerous action interception
@@ -554,6 +556,17 @@ macOS GUI smoke tests are gated because they open and edit a temporary TextEdit 
 ```bash
 npm run test:macos-gui
 ```
+
+## Acknowledgments
+
+UCU-MCP stands on the shoulders of several projects and ideas:
+
+- **[OpenAI Codex Computer Use](https://openai.com/codex)** — the ScreenCaptureKit per-window capture technique (reading a window's composited surface to defeat occlusion) and the AX↔vision render-tree mapping concept both trace back to Codex's `SkyComputerUseService`. UCU-MCP's `native/sck` helper and the native-first AX traversal (`native/ax`) pursue the same goals.
+- **[trycua/cua](https://github.com/trycua/cua)** — the SkyLight per-process input approach (`SLEventPostToPid` / `focusWithoutRaise`) that lets an agent click and type into a background window without stealing focus or moving the physical cursor. UCU-MCP's `native/skylight` helper implements the same SPI.
+- **[Model Context Protocol](https://modelcontextprotocol.io)** (Anthropic) — the open standard this server speaks.
+- **Apple frameworks** — ApplicationServices (Accessibility), ScreenCaptureKit, CoreGraphics, and the SkyLight private SPIs.
+
+The native-AX speed work (CoreFoundation `AXUIElementCopyAttributeValue` replacing the JXA/`osascript` bridge, ~200x faster) was motivated by Codex's responsiveness target.
 
 ## License
 
