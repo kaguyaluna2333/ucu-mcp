@@ -28,7 +28,7 @@
     "test:macos-gui": "UCU_MACOS_GUI_SMOKE=1 vitest run tests/integration/macos-gui-smoke.test.ts",
     "test:client-cli": "UCU_CLIENT_CLI_SMOKE=1 vitest run tests/integration/client-cli-smoke.test.ts",
     "prepublishOnly": "npx vitest run tests/unit/ && npm run build",
-    "build:native": "cd native/cgevent && swiftc -O -o cgevent-helper main.swift -framework CoreGraphics -framework Foundation && cd ../ocr && swiftc -O -o ocr-helper main.swift -framework Vision -framework AppKit && cd ../windowlist && swiftc -O -o windowlist-helper main.swift -framework CoreGraphics -framework Foundation && cd ../skylight && swiftc -O -o skylight-helper main.swift -framework CoreGraphics -framework Foundation -framework AppKit -framework Cocoa"
+    "build:native": "cd native/cgevent && swiftc -O -o cgevent-helper main.swift -framework CoreGraphics -framework Foundation && cd ../ocr && swiftc -O -o ocr-helper main.swift -framework Vision -framework AppKit && cd ../windowlist && swiftc -O -o windowlist-helper main.swift -framework CoreGraphics -framework Foundation && cd ../skylight && swiftc -O -o skylight-helper main.swift -framework CoreGraphics -framework Foundation -framework AppKit -framework Cocoa && cd ../sck && swiftc -O -o sck-helper main.swift -framework ScreenCaptureKit -framework CoreGraphics -framework AppKit -framework Foundation -framework ImageIO && cd ../ax && swiftc -O -o ax-helper main.swift -framework ApplicationServices -framework AppKit -framework Foundation"
   },
   "keywords": [
     "mcp",

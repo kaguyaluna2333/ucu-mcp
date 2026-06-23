@@ -4,6 +4,7 @@ import type { WindowInfo, WindowState, FindElementOptions, FindElementResult, Fi
 import { WindowNotFoundError, PlatformError } from "../../util/errors.js";
 import { rethrowAccessibilityError } from "./helpers.js";
 import { jxaChildElements, jxaGetBounds, jxaIsVisible } from "../jxa-helpers.js";
+import { resolveNativeHelper } from "./window.js";
 
 export async function getWindowState(this: MacOSPlatform, windowId?: string, depth?: number, includeBounds: boolean = true): Promise<WindowState> {
   if (!windowId || windowId === this.activeTarget?.windowId) {
@@ -14,6 +15,13 @@ export async function getWindowState(this: MacOSPlatform, windowId?: string, dep
     throw new WindowNotFoundError("active target");
   }
   const maxDepth = Math.min(depth || 3, 10);
+
+  // ponytail: native CoreFoundation AX helper first — ~36x faster than the JXA
+  // bridge (0.05s vs 1.7s measured on ccSwitch). Falls back to the JXA path
+  // below if the helper binary is absent or returns an error.
+  const nativeState = getWindowStateNative.call(this, resolvedWindowId, maxDepth, includeBounds);
+  if (nativeState) return nativeState;
+
   const maxElements = 50;
   const windowIdLiteral = JSON.stringify(resolvedWindowId);
   const targetWindow = (await this.listWindows(true)).find((w) => w.id === resolvedWindowId);
@@ -261,6 +269,9 @@ export async function findElement(this: MacOSPlatform, options: FindElementOptio
 
   const startTime = Date.now();
 
+  // ponytail: native AX helper first (~36x faster); JXA below is the fallback.
+  const nativeFind = findElementNative.call(this, options);
+
     const jxaScript = `
       var se = Application('System Events');
       ${jxaChildElements()}
@@ -409,12 +420,12 @@ export async function findElement(this: MacOSPlatform, options: FindElementOptio
   `;
 
   try {
-    const out = execFileSync("osascript", [
+    // nativeFind short-circuits the JXA spawn when set; native errors are
+    // swallowed inside findElementNative (returns null) so they fall through to JXA.
+    const parsed = (nativeFind ?? JSON.parse(execFileSync("osascript", [
       "-l", "JavaScript",
       "-e", jxaScript,
-    ], { encoding: "utf-8", timeout: 30000 }).trim();
-
-    const parsed = JSON.parse(out) as { results: FindElementResult[]; scannedCount: number; matchedCount: number };
+    ], { encoding: "utf-8", timeout: 30000 }).trim())) as { results: FindElementResult[]; scannedCount: number; matchedCount: number };
     const durationMs = Date.now() - startTime;
     for (const result of parsed.results) {
       const appName = effectiveApp || result.id.split("/")[0] || "";
@@ -465,5 +476,91 @@ export async function findElement(this: MacOSPlatform, options: FindElementOptio
     };
   } catch (error) {
     rethrowAccessibilityError(error, "find_element");
+  }
+}
+
+// ponytail: native CoreFoundation AX traversal via the ax-helper binary.
+// ~36x faster than JXA (no per-attribute ObjC bridge hop, no osascript spawn).
+// Both return null when the helper is absent or errors so callers fall back to JXA.
+function getWindowStateNative(this: MacOSPlatform, windowId: string, maxDepth: number, includeBounds: boolean): WindowState | null {
+  const pid = this.activeTarget?.pid;
+  if (!pid) return null;
+  // tray targets ("tray" or any non-"App/winN" id) can't be resolved by the
+  // helper's winN index — fall back to JXA so behavior matches pre-native
+  // (WindowNotFoundError) instead of silently returning host window 0.
+  if (!windowId.includes("/win")) return null;
+  const helperPath = resolveNativeHelper.call(this, "ax", "ax-helper");
+  if (!helperPath) return null;
+  try {
+    const out = execFileSync(helperPath, [], {
+      input: JSON.stringify({ command: "getWindowState", pid, windowId, depth: maxDepth, maxNodes: 50, includeBounds }),
+      encoding: "utf-8",
+      timeout: 15000,
+    }).trim();
+    const parsed = JSON.parse(out);
+    if (parsed.error || !parsed.window) return null;
+    const w = parsed.window;
+    // shape guard: a malformed payload (drift) must fall back to JXA, not yield
+    // a degenerate WindowInfo with missing bounds fields.
+    if (!w.bounds || typeof w.bounds.x !== "number" || typeof w.bounds.width !== "number") return null;
+    return {
+      window: {
+        id: w.id ?? windowId,
+        title: w.title ?? "",
+        processName: w.processName ?? "",
+        pid: w.pid ?? pid,
+        bounds: w.bounds,
+        isMinimized: w.isMinimized ?? false,
+        isOnScreen: w.isOnScreen ?? true,
+      },
+      focusedElement: parsed.focusedElement || undefined,
+      tree: parsed.tree || undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function findElementNative(this: MacOSPlatform, options: FindElementOptions): { results: FindElementResult[]; scannedCount: number; matchedCount: number } | null {
+  const helperPath = resolveNativeHelper.call(this, "ax", "ax-helper");
+  if (!helperPath) return null;
+  const { text, role, app, depth, includeBounds = true, textMode = "contains", visibleOnly = false, value } = options;
+  const effectiveApp = app || this.activeTarget?.appName;
+  const pid = this.activeTarget?.pid;
+  const input: Record<string, unknown> = {
+    command: "findElement",
+    depth: Math.min(depth || 5, 10),
+    // maxNodes 2000: JXA's findElement is effectively unbounded (capped only by
+    // maxResults), so a low cap lost matches on ccSwitch's multi-window tree.
+    // 2000 is a hard ceiling — apps with larger trees truncate here where JXA
+    // would not; acceptable for the ~200x perf win, revisit if a target needs more.
+    maxNodes: 2000,
+    maxResults: Math.min(Math.max(options.maxResults ?? 50, 1), 200),
+    includeBounds,
+    textMode,
+    visibleOnly,
+  };
+  if (text) input.text = text;
+  if (role) input.role = role;
+  if (value) input.value = value;
+  // app is always passed when known: ax-helper uses it as the elementId prefix
+  // (matching JXA's `${app}/win${w}` path) even when a pid is also present.
+  if (effectiveApp) input.app = effectiveApp;
+  if (pid) input.pid = pid;
+  else if (!effectiveApp) input.scanAllProcesses = true;
+  try {
+    const out = execFileSync(helperPath, [], {
+      input: JSON.stringify(input),
+      encoding: "utf-8",
+      timeout: 30000,
+    }).trim();
+    const r = JSON.parse(out);
+    if (r.error) return null;
+    // shape guard: drift (e.g. renamed fields) must fall back to JXA, not coerce
+    // into a silent empty-result success that bypasses JXA.
+    if (!Array.isArray(r.results) || typeof r.scannedCount !== "number" || typeof r.matchedCount !== "number") return null;
+    return { results: r.results, scannedCount: r.scannedCount, matchedCount: r.matchedCount };
+  } catch {
+    return null;
   }
 }

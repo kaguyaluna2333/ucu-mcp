@@ -255,7 +255,7 @@ function listWindowsNative(this: MacOSPlatform): WindowInfo[] | null {
   }
 }
 
-function resolveNativeHelper(this: MacOSPlatform, folder: string, binary: string): string | null {
+export function resolveNativeHelper(this: MacOSPlatform, folder: string, binary: string): string | null {
   if (this._nativeHelperPaths && folder in this._nativeHelperPaths) {
     const override = this._nativeHelperPaths[folder];
     return override === null ? null : override;

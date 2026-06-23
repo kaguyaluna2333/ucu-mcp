@@ -18,12 +18,13 @@ function lastJxaScript(): string {
   return args.at(-1) ?? "";
 }
 
-/** Create a MacOSPlatform with native windowlist helper disabled,
- *  forcing listWindows to use the JXA path. Tests that verify JXA
- *  behavior or set up precise mock sequences for listWindows need
- *  this so the native helper doesn't consume an execFileSync call. */
+/** Create a MacOSPlatform with native AX helpers disabled (windowlist, skylight,
+ *  ax), forcing JXA paths. Tests that verify JXA script content or set up precise
+ *  mock sequences need this so a native helper doesn't consume an execFileSync
+ *  call — findElement tries ax-helper before osascript, so JXA-script assertions
+ *  must disable ax or they inspect the ax-helper spawn instead. */
 function jxaOnlyPlatform(): MacOSPlatform {
-  return new MacOSPlatform({ nativeHelperPaths: { windowlist: null, skylight: null } });
+  return new MacOSPlatform({ nativeHelperPaths: { windowlist: null, skylight: null, ax: null } });
 }
 
 describe("MacOSPlatform", () => {
@@ -350,7 +351,7 @@ describe("MacOSPlatform", () => {
       scannedCount: 5,
       matchedCount: 1,
     }));
-    const platform = new MacOSPlatform();
+    const platform = jxaOnlyPlatform();
 
     const response = await platform.findElement({
       text: "Save",
@@ -385,13 +386,31 @@ describe("MacOSPlatform", () => {
       scannedCount: 3,
       matchedCount: 1,
     }));
-    const platform = new MacOSPlatform();
+    const platform = jxaOnlyPlatform();
 
     await platform.findElement({ role: "AXTextField", app: "Notes", value: "a@b.com" });
 
     const script = lastJxaScript();
     expect(script).toContain("valueFilter");
     expect(script).toContain("a@b.com");
+  });
+
+  it("uses the native ax helper and short-circuits JXA when it succeeds", async () => {
+    execFileSyncMock.mockReturnValue(JSON.stringify({
+      results: [{ id: "Notes/win0/1", role: "AXButton", name: "Save" }],
+      scannedCount: 2,
+      matchedCount: 1,
+    }));
+    // ax helper path override: resolveNativeHelper returns it without existsSync,
+    // so findElementNative consumes the mock once and osascript is never spawned.
+    const platform = new MacOSPlatform({ nativeHelperPaths: { ax: "/fake/ax-helper" } });
+
+    const response = await platform.findElement({ role: "AXButton", app: "Notes" });
+
+    expect(response.results).toHaveLength(1);
+    const cmds = execFileSyncMock.mock.calls.map((c) => c[0]);
+    expect(cmds).toHaveLength(1);
+    expect(cmds[0]).toBe("/fake/ax-helper");
   });
 
   it("returns only the Nth result when index is provided", async () => {

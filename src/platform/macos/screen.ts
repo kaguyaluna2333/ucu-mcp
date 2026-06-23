@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { MacOSPlatform } from "./base.js";
@@ -26,7 +26,46 @@ export async function screenshotWindow(this: MacOSPlatform, windowId: string, op
   if (!win) {
     throw new WindowNotFoundError(windowId);
   }
+  // ponytail: prefer ScreenCaptureKit per-window capture — it reads the window's
+  // composited surface from the window server, so it returns the TRUE window
+  // bitmap even when occluded/backgrounded (this is the Codex technique). The
+  // `screencapture` region path below only grabs screen pixels and shows the
+  // occluder. Falls back to region capture if sck-helper is absent or fails.
+  const sckBase64 = await captureWindowSck(win.windowNumber);
+  if (sckBase64) return Buffer.from(sckBase64, "base64");
   return this.screenshot(undefined, win.bounds, options);
+}
+
+/**
+ * Capture a single window's composited bitmap via the native ScreenCaptureKit
+ * helper — ignores occlusion/background. Returns base64 PNG, or null if the
+ * helper is unavailable or fails (caller falls back to screen-region capture).
+ */
+async function captureWindowSck(windowNumber: number | undefined): Promise<string | null> {
+  if (!windowNumber) return null;
+  const screenDirname = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    join(screenDirname, "..", "..", "..", "..", "native", "sck", "sck-helper"),
+    join(screenDirname, "..", "..", "..", "native", "sck", "sck-helper"),
+    join(screenDirname, "..", "..", "native", "sck", "sck-helper"),
+    join(process.cwd(), "native", "sck", "sck-helper"),
+  ];
+  const helperPath = candidates.find(existsSync);
+  if (!helperPath) return null;
+  try {
+    const stdout = execFileSync(helperPath, [], {
+      input: JSON.stringify({ windowId: windowNumber }),
+      encoding: "utf-8",
+      timeout: 30000,
+    }).trim();
+    const parsed = JSON.parse(stdout);
+    if (parsed.error || !parsed.imagePath) return null;
+    const base64 = readFileSync(parsed.imagePath, { encoding: "base64" });
+    try { unlinkSync(parsed.imagePath); } catch {}
+    return base64;
+  } catch {
+    return null;
+  }
 }
 
 export function getScreenSize(this: MacOSPlatform, display?: number): ScreenSize {
