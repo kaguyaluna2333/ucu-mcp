@@ -16,3 +16,7 @@ dist/
 *.log
 coverage/
 *.tsbuildinfo
+
+# tool / planning work products (local only — never commit)
+.codegraph/
+docs/superpowers/
