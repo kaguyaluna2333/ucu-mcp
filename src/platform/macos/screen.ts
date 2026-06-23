@@ -10,11 +10,11 @@ import { WindowNotFoundError, CaptureError } from "../../util/errors.js";
 import { logger } from "../../util/logger.js";
 import { rethrowCaptureError, errorMessage } from "./helpers.js";
 
-export async function screenshot(this: MacOSPlatform, _display?: number, region?: ScreenRegion, options?: ScreenshotOptions): Promise<Buffer> {
+export async function screenshot(this: MacOSPlatform, display?: number, region?: ScreenRegion, options?: ScreenshotOptions): Promise<Buffer> {
   try {
     const base64 = region
       ? await captureRegion(region.x, region.y, region.width, region.height, options)
-      : await captureFullScreen(options);
+      : await captureFullScreen({ ...(options ?? {}), display });
     return Buffer.from(base64, "base64");
   } catch (error) {
     rethrowCaptureError(error, region ? "capture region" : "capture full screen");
@@ -59,11 +59,15 @@ async function captureWindowSck(windowNumber: number | undefined): Promise<strin
       timeout: 30000,
     }).trim();
     const parsed = JSON.parse(stdout);
-    if (parsed.error || !parsed.imagePath) return null;
+    if (parsed.error || !parsed.imagePath) {
+      if (parsed.error) logger.warn("sck-helper failed, falling back to region capture", { error: parsed.error });
+      return null;
+    }
     const base64 = readFileSync(parsed.imagePath, { encoding: "base64" });
-    try { unlinkSync(parsed.imagePath); } catch {}
+    try { unlinkSync(parsed.imagePath); } catch (e) { logger.warn("sck temp cleanup failed", { error: errorMessage(e) }); }
     return base64;
-  } catch {
+  } catch (error) {
+    logger.warn("sck-helper failed, falling back to region capture", { error: errorMessage(error) });
     return null;
   }
 }

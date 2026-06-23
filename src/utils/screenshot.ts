@@ -11,6 +11,8 @@ type Platform = "darwin" | "linux" | "win32";
 export interface ScreenshotEncodeOptions {
   format?: "png" | "jpeg";
   maxWidth?: number;
+  /** Display index to capture (full-screen mode only). macOS: passed as `screencapture -D`. */
+  display?: number;
 }
 
 function getPlatform(): Platform {
@@ -71,9 +73,15 @@ export async function captureFullScreen(options?: ScreenshotEncodeOptions): Prom
   const outFile = await tempImagePath("png");
 
   switch (platform) {
-    case "darwin":
-      await execFileAsync("screencapture", ["-x", outFile]);
+    case "darwin": {
+      const args = ["-x"];
+      // screencapture -D is a 1-based ordinal (-D 1 = main); the tool schema's
+      // `display` is a 0-based NSScreen index (matching getScreenSize/ocr), so +1.
+      if (typeof options?.display === "number") args.push(`-D${options.display + 1}`);
+      args.push(outFile);
+      await execFileAsync("screencapture", args);
       break;
+    }
     case "linux":
       await execFileAsync("scrot", [outFile]);
       break;
@@ -82,63 +90,6 @@ export async function captureFullScreen(options?: ScreenshotEncodeOptions): Prom
         "-NoProfile",
         "-Command",
         `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen | ForEach-Object { $bmp = New-Object System.Drawing.Bitmap($_.Bounds.Width, $_.Bounds.Height); $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($_.Bounds.Location, [System.Drawing.Point]::Empty, $_.Bounds.Size); $bmp.Save('${outFile.replace(/'/g, "''").replace(/\\/g, "\\\\")}'); $g.Dispose(); $bmp.Dispose() }`,
-      ]);
-      break;
-  }
-
-  return encodeForClient(outFile, options);
-}
-
-/**
- * Capture a specific window by its ID and return a base64-encoded PNG string.
- *
- * - macOS: windowId is the CGWindowID (use `osascript -e 'tell app "System Events" ...'` or Quartz).
- * - Linux: windowId is the X11 window id (xdotool style).
- * - Windows: windowId is the native HWND (hex or decimal).
- */
-export async function captureWindow(windowId: number | string, options?: ScreenshotEncodeOptions): Promise<string> {
-  const platform = getPlatform();
-  const outFile = await tempImagePath("png");
-
-  switch (platform) {
-    case "darwin":
-      // screencapture -l<windowId> captures a specific window
-      await execFileAsync("screencapture", ["-x", `-l${windowId}`, outFile]);
-      break;
-    case "linux": {
-      // Use import from xdotool / xwd + convert
-      const wid = String(windowId);
-      // xwd -> convert to png via ImageMagick
-      const xwdFile = outFile.replace(/\.png$/, ".xwd");
-      await execFileAsync("xwd", ["-id", wid, "-out", xwdFile]);
-      await execFileAsync("convert", [xwdFile, outFile]);
-      await unlink(xwdFile).catch(() => {});
-      break;
-    }
-    case "win32":
-      // PowerShell: capture a specific window handle
-      await execFileAsync("powershell", [
-        "-NoProfile",
-        "-Command",
-        `Add-Type -AssemblyName System.Drawing; Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-using System.Drawing;
-public class WinCapture {
-  [DllImport("user32.dll")] public static extern IntPtr GetWindowRect(IntPtr hWnd, out RECT r);
-  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
-  public static void CaptureWindow(IntPtr hWnd, string path) {
-    RECT r; GetWindowRect(hWnd, out r);
-    int w = r.Right - r.Left, h = r.Bottom - r.Top;
-    if (w <= 0 || h <= 0) throw new Exception("Invalid window size");
-    var bmp = new Bitmap(w, h);
-    var g = Graphics.FromImage(bmp);
-    g.CopyFromScreen(r.Left, r.Top, 0, 0, new Size(w, h));
-    bmp.Save(path);
-    g.Dispose(); bmp.Dispose();
-  }
-}
-'@; [WinCapture]::CaptureWindow([IntPtr]${windowId}, '${outFile.replace(/'/g, "''").replace(/\\/g, "\\\\")}')`,
       ]);
       break;
   }

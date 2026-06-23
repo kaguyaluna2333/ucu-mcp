@@ -594,14 +594,17 @@ export async function clickMenuBarExtra(this: MacOSPlatform, app: string, select
     }
     JSON.stringify(_result);
   `;
-  let out: string;
+  let result: any = null;
   try {
-    out = execFileSync("osascript", ["-l", "JavaScript", "-e", jxaScript], { encoding: "utf-8", timeout: 15000 }).trim();
+    const out = execFileSync("osascript", ["-l", "JavaScript", "-e", jxaScript], { encoding: "utf-8", timeout: 15000 }).trim();
+    result = JSON.parse(out);
+    if (!result || typeof result !== "object" || Array.isArray(result)) {
+      throw new Error(`click_menu_bar_extra in ${app}: unexpected helper response`);
+    }
   } catch (error) {
     rethrowElementActionError(error, "click_menu_bar_extra", app);
     return { method: "axpress", verified: false }; // unreachable — rethrow throws
   }
-  const result = JSON.parse(out);
   if (!result.success) {
     throw new Error(`click_menu_bar_extra failed in ${app}: ${result.error}`);
   }

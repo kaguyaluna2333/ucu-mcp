@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type { MacOSPlatform } from "./base.js";
 import type { CursorPosition } from "../base.js";
-import { click as inputClick, doubleClick as inputDoubleClick, move as inputMove, drag as inputDrag, scroll as inputScroll, typeText, pressShortcut, type InputTarget } from "../../utils/input.js";
+import { click as inputClick, doubleClick as inputDoubleClick, move as inputMove, drag as inputDrag, scroll as inputScroll, typeText, pressKey, pressShortcut, type InputTarget } from "../../utils/input.js";
 import type { DispatchMethod } from "../base.js";
 import { PlatformError } from "../../util/errors.js";
 import { rethrowInputError, errorMessage } from "./helpers.js";
@@ -91,5 +91,9 @@ export async function type(this: MacOSPlatform, text: string, delay?: number): P
 }
 
 export async function key(this: MacOSPlatform, keys: string[]): Promise<DispatchMethod | void> {
+  // Single key (Enter/Escape/Tab/arrows/F-keys, no modifier) dispatches directly
+  // — pressShortcut requires >=2 keys (modifier + key), so without this a lone
+  // special key throws and the tool-layer single-key path is unreachable.
+  if (keys.length === 1) return await pressKey(keys[0], [], process.platform, targetOf.call(this));
   return await pressShortcut(keys, process.platform, targetOf.call(this));
 }

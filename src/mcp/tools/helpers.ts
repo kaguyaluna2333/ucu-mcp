@@ -318,6 +318,11 @@ export async function withSafety<T>(sa: SafetyAction): Promise<T> {
   }
 }
 
+// ponytail: polls getCursorPosition (sync osascript spawn) every 500ms for the
+// whole server lifetime, blocking the event loop ~100ms/tick. Faster fix =
+// cgevent-helper cursor command, but CGEvent.location's coordinate origin vs
+// NSEvent.mouseLocation (flipped) needs verification first — left as ceiling.
+// Widen the interval or move to cgevent when event-loop latency shows up.
 export function startUserActivityMonitor(): void {
   if (userActivityInterval) return;
   try {

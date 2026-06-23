@@ -213,10 +213,17 @@ if input.command == "findElement" {
   } else {
     emit(FindResult(results: [], scannedCount: 0, matchedCount: 0, error: "missing pid/app"))
   }
-  let appPrefix = (input.app ?? input.windowId?.split(separator: "/").first.map(String.init)).map { $0 + "/" } ?? ""
   let walker = AxWalker(maxDepth, maxNodes, includeBounds)
   var results: [FindItem] = []; var scanned = 0
   outer: for pid in pids {
+    // per-pid prefix: explicit app name, else the process's localized name, so
+    // scanAllProcesses ids match JXA's `procName/winN/...` shape (not bare winN,
+    // which would misattribute cached elements to appName "win0").
+    let appPrefix: String = {
+      if let a = input.app, !a.isEmpty { return a + "/" }
+      if let nm = NSRunningApplication(processIdentifier: pid)?.localizedName, !nm.isEmpty { return nm + "/" }
+      return ""
+    }()
     let appEl = AXUIElementCreateApplication(pid)
     var wref: CFTypeRef?; var windowsArr: [AXUIElement] = []
     if AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &wref) == .success, let a = wref as? [AXUIElement] { windowsArr = a }

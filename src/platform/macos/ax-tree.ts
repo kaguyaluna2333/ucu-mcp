@@ -2,9 +2,10 @@ import { execFileSync } from "node:child_process";
 import type { MacOSPlatform } from "./base.js";
 import type { WindowInfo, WindowState, FindElementOptions, FindElementResult, FindElementResponse } from "../base.js";
 import { WindowNotFoundError, PlatformError } from "../../util/errors.js";
-import { rethrowAccessibilityError } from "./helpers.js";
+import { rethrowAccessibilityError, errorMessage } from "./helpers.js";
 import { jxaChildElements, jxaGetBounds, jxaIsVisible } from "../jxa-helpers.js";
 import { resolveNativeHelper } from "./window.js";
+import { logger } from "../../util/logger.js";
 
 export async function getWindowState(this: MacOSPlatform, windowId?: string, depth?: number, includeBounds: boolean = true): Promise<WindowState> {
   if (!windowId || windowId === this.activeTarget?.windowId) {
@@ -498,7 +499,11 @@ function getWindowStateNative(this: MacOSPlatform, windowId: string, maxDepth: n
       timeout: 15000,
     }).trim();
     const parsed = JSON.parse(out);
-    if (parsed.error || !parsed.window) return null;
+    // tree-less success means winIdx was out of range: windowId carries a
+    // CGWindowNumber from windowlist (not an index), so it almost never maps to
+    // a valid kAXWindowsAttribute slot → fall back to JXA (which matches by
+    // title/bounds) instead of returning a degenerate tree-less WindowState.
+    if (parsed.error || !parsed.window || !parsed.tree) return null;
     const w = parsed.window;
     // shape guard: a malformed payload (drift) must fall back to JXA, not yield
     // a degenerate WindowInfo with missing bounds fields.
@@ -516,7 +521,8 @@ function getWindowStateNative(this: MacOSPlatform, windowId: string, maxDepth: n
       focusedElement: parsed.focusedElement || undefined,
       tree: parsed.tree || undefined,
     };
-  } catch {
+  } catch (error) {
+    logger.warn("native ax-helper failed, falling back to JXA", { op: "getWindowState", error: errorMessage(error) });
     return null;
   }
 }
@@ -560,7 +566,8 @@ function findElementNative(this: MacOSPlatform, options: FindElementOptions): { 
     // into a silent empty-result success that bypasses JXA.
     if (!Array.isArray(r.results) || typeof r.scannedCount !== "number" || typeof r.matchedCount !== "number") return null;
     return { results: r.results, scannedCount: r.scannedCount, matchedCount: r.matchedCount };
-  } catch {
+  } catch (error) {
+    logger.warn("native ax-helper failed, falling back to JXA", { op: "findElement", error: errorMessage(error) });
     return null;
   }
 }

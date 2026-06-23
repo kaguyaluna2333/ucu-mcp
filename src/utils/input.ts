@@ -1,3 +1,7 @@
+// ponytail: the `_platform` param + linux/Windows branches below are dead code
+// (server runs darwin-only; README documents Win/Linux as fail-explicit). Kept
+// rather than refactored — removal touches every function signature + callers +
+// tests. Delete when a real cross-platform Platform adapter lands.
 /**
  * Cross-platform input synthesis for UCU-MCP.
  *
@@ -80,11 +84,6 @@ function isSkylightAvailable(): boolean {
   return _skylightAvailable;
 }
 
-/** @deprecated use isCgeventAvailable — kept for external callers/tests. */
-function isNativeAvailable(): boolean {
-  return isCgeventAvailable();
-}
-
 /**
  * Run an input command via the best available helper.
  * - target.pid > 0 AND skylight available → skylight-helper (per-process, no cursor move). Returns "per-pid".
@@ -131,11 +130,6 @@ function runInputChecked(payload: Record<string, unknown>, target?: InputTarget)
     if (e instanceof Error && e.message.startsWith("native helper error:")) throw e;
     throw new Error(`input dispatch failed: cgevent helper unavailable (${(e as Error).message})`);
   }
-}
-
-/** @deprecated use runInputChecked — kept for external callers/tests. */
-function runNativeChecked(payload: Record<string, unknown>): void {
-  runInputChecked(payload);
 }
 
 // ── Dry-run mode ──────────────────────────────────────────────────────────

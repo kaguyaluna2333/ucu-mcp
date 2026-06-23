@@ -63,10 +63,14 @@ export function selectWindowForApp(windows: import("../base.js").WindowInfo[], r
   const matched = windows.filter((window) => normalizeAppName(window.processName) === requested);
   const pool = matched.length > 0 ? matched : windows.filter((window) => appNameMatches(window.processName, requestedApp));
   if (pool.length === 0) return undefined;
-  if (pool.length === 1) return pool[0];
-  // Multiple windows for the same app (common for Chromium/Electron which expose
-  // many compositor sub-windows). Prefer: onScreen → has title → largest area.
-  const scored = pool.map((w) => ({
+  // Hard-filter to on-screen windows: an offscreen Chromium/Electron compositor
+  // surface can be large enough that its area alone outscores a real on-screen
+  // window (the +1000 onScreen bonus is noise vs ~60k area units). Only fall
+  // back to offscreen/minimized candidates when no visible window exists.
+  const onScreen = pool.filter((w) => w.isOnScreen && !w.isMinimized);
+  const candidates = onScreen.length > 0 ? onScreen : pool;
+  if (candidates.length === 1) return candidates[0];
+  const scored = candidates.map((w) => ({
     w,
     score: (w.isOnScreen ? 1000 : 0) + (w.title ? 500 : 0) + (w.bounds.width * w.bounds.height),
   }));
