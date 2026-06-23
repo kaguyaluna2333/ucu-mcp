@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.8] - 2026-06-24
+
+Codex 级后台操作 + native AX 速度突破。
+
+### Added — native helpers (Swift, under `native/`)
+- **`ax`**: CoreFoundation AX 遍历(`AXUIElementCopyAttributeValue`)。`find_element` / `get_window_state` 改 **native-first**(~200x:cc-switch depth:8 `51ms` vs JXA `10915ms`),JXA 作 fallback。
+- **`sck`**: ScreenCaptureKit 单窗口捕获,读窗口合成表面,**无视遮挡/后台**(Codex 的 `desktopIndependentWindow` 技术)。`screenshot({windowId})` 走此路径。
+- **`skylight`**: SkyLight per-pid 后台输入(`SLEventPostToPid` / `focusWithoutRaise`),不抢前台、不动光标。
+- **`windowlist`** / **`ocr`**(Vision) / **`cgevent`**(CGEvent 输入)helper。
+
+### Fixed — 全面 code review (adversarial)
+- `press_key` 单键(Enter/Escape/Tab,无 modifier)现在可达 `pressKey`(原 `pressShortcut` 要求 ≥2 keys,单键必抛)。
+- `get_window_state` 加 `!parsed.tree` guard —— native 把 CGWindowNumber 当索引越界时回退 JXA(而非静默返回空树)。
+- `focus_app` 硬过滤 onScreen(Chromium/Electron 不再误选 offscreen compositor surface)。
+- `screenshot(display)` 修正 0-based index → `screencapture -D` 1-based 序数转换。
+- native AX / SCK helper 失败时 `logger.warn`(原静默降级)。
+- `click_menu_bar_extra` JSON.parse 加 type guard。
+- `find_element` scanAll 模式 per-pid 进程名前缀(对齐 JXA id 形状)。
+
+### Docs
+- README **双语**(英文 + 简体中文)+ Acknowledgments(Codex Computer Use / trycua/cua / MCP / Apple 框架)。
+- "cross-platform" → **"macOS-native"**(Win/Linux 是显式失败 stub)。
+- skill 更新:SCK 无视遮挡说明 + 完整后台操作 workflow(focus_app + screenshot(windowId) + per-pid click)。
+- 删除严重过时的 `docs/{ARCHITECTURE,PLATFORM,SAFETY}.md`(早于 0.4.2 拆分 + native helpers);README/skill 为单一真相源。
+- 清理误传的内部工作产物(`docs/superpowers/`、`REVIEW.md`)。
+
 ## [0.6.7] - 2026-06-18
 
 Claude Code 实机测试暴露的致命 bug：Chromium/Electron app 操控完全失败。
