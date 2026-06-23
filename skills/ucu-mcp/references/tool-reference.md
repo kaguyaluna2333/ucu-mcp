@@ -14,10 +14,17 @@ when a `windowId` is explicitly passed).
 ### `screenshot`
 Capture the full screen, a region, or a specific window.
 
+> **`windowId` uses ScreenCaptureKit** — it reads the window's composited
+> surface, returning the TRUE window bitmap even when the window is **occluded
+> or backgrounded** (no occluder bleed-through). This is the background-operation
+> visual path: pair with `focus_app` + per-pid click to observe and drive a
+> window without stealing foreground. `screenshot{}` (no windowId) grabs screen
+> pixels and shows whatever is on top — do NOT use it during background work.
+
 | Param | Type | Default | Notes |
 |---|---|---|---|
-| `display` | number | 0 | Display index |
-| `windowId` | string | — | From `list_windows`; captures that window |
+| `display` | number | 0 | Display index (0-based; forwarded as `screencapture -D`) |
+| `windowId` | string | — | From `list_windows`; SCK capture, **ignores occlusion/background** |
 | `region` | `{x,y,width,height}` | — | Mutually exclusive with `windowId` |
 | `format` | `"png"` \| `"jpeg"` | `"png"` | |
 | `maxWidth` | number | 1280 | Resize preserving aspect ratio |
@@ -40,6 +47,8 @@ distinguishing permission-denied vs Electron-opacity.
 AX tree of a window. Returns `WindowState` = `{window, focusedElement?, tree?}`.
 The `tree` is a depth-limited `ElementInfo` (`{role, name, value, states,
 bounds?, children?}`).
+
+> Native CoreFoundation traversal — fast enough to poll between actions.
 
 | Param | Type | Default |
 |---|---|---|
@@ -153,6 +162,9 @@ Find AX elements by text/role/value. Returns `{results: FindElementResult[],
 metrics}`. Each result has an `id` for use in the element tools below. When 0
 results, includes a hint guiding to `screenshot`+`ocr`+`click(x,y)` (Electron
 opacity).
+
+> Native CoreFoundation traversal (~50ms even at depth 8) — call freely to
+> re-probe the tree between steps; the slower JXA path is the automatic fallback.
 
 | Param | Type | Default | Notes |
 |---|---|---|---|

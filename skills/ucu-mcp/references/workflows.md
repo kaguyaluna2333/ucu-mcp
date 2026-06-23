@@ -247,3 +247,32 @@ If tools keep failing and you don't know why:
    now? (You may be looking at a different app than you think.)
 4. Read the `hint` in the last error response — it names the recovery step.
 5. Check [troubleshooting.md](troubleshooting.md) for the error code.
+
+---
+
+## 9. Operate fully in the background (no foreground theft)
+
+Per-pid posting + ScreenCaptureKit combine into true background operation: drive
+a window while the user keeps working in another app in front of it.
+
+```
+# 1. focus the target → clicks/types route per-pid (no cursor move)
+focus_app({ app: "TargetApp" })            # subsequent input → dispatch:"per-pid"
+
+# 2. SEE the target even when occluded → SCK reads the composited surface
+screenshot({ windowId: "TargetApp/w0" })   # TRUE window bitmap, ignores occluder
+#   NOT screenshot{} — that grabs screen pixels and shows the frontmost app
+
+# 3. ACT without raising the window → AX or coordinate, both per-pid
+find_element({ text: "Save" })             # native AX, ~50ms
+click_element({ elementId })               # per-pid, no foreground theft
+```
+
+**Verification works in the background:** `result.dispatch:"per-pid"` confirms
+no cursor move; `screenshot({windowId})` re-confirms the target's real state
+(not the occluder's). If `dispatch:"hid-tap"` appears, `focus_app` was lost —
+re-establish it.
+
+**Don't** use `screenshot{}` (no windowId) during background operation — it
+captures the frontmost screen (the user's app), not your target. Use
+`screenshot({windowId})` or `get_window_state` to observe the target.

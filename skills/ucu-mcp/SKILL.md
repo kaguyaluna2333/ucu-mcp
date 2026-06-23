@@ -16,7 +16,10 @@ description: >-
 UCU-MCP is a macOS computer-use MCP server for CLI agents. It exposes 26 tools
 that let you see the screen and drive native apps through Accessibility (AX)
 APIs, per-process event posting (SLEventPostToPid — background, no cursor move),
-Vision OCR, and ScreenCaptureKit screenshots. Windows/Linux are explicit stubs.
+Vision OCR, and ScreenCaptureKit screenshots. `screenshot({windowId})` reads a
+window's composited surface via SCK, so it sees the TRUE window even when
+occluded/backgrounded — pair with per-pid input for full background operation
+(see [workflow #9](references/workflows.md)). Windows/Linux are explicit stubs.
 
 > **This skill operates directly in the user's environment.** Read the
 > [Confirmation Policy](#confirmation-policy) before taking risky actions —
